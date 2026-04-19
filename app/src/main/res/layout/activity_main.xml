@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal"
+    android:background="#FAFAFA">
+
+    <!-- ── Title ── -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="📊 DATA HARVESTER"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#212121"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="24dp" />
+
+    <!-- ── Stats Card ── -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="32dp"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="4dp"
+        app:cardBackgroundColor="#FFFFFF">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Status: ○ Stopped"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#9E9E9E"
+                android:layout_marginBottom="16dp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#EEEEEE"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/recordCountText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Records: 0"
+                android:textSize="16sp"
+                android:textColor="#424242"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:id="@+id/todayUsageText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Today: 0.0 MB"
+                android:textSize="16sp"
+                android:textColor="#424242"
+                android:layout_marginBottom="10dp" />
+
+            <TextView
+                android:id="@+id/lastRecordText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Last: No records yet"
+                android:textSize="14sp"
+                android:textColor="#757575" />
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- ── Buttons ── -->
+
+    <Button
+        android:id="@+id/startButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="▶  START COLLECTION"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#4CAF50"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/stopButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="⏹  STOP COLLECTION"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#F44336"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/exportButton"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="📤  EXPORT CSV"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#1976D2"
+        android:layout_marginBottom="16dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Collecting every 2 minutes via TrafficStats"
+        android:textSize="12sp"
+        android:textColor="#BDBDBD"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>
