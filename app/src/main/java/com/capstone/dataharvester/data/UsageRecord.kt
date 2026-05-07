@@ -71,5 +71,21 @@ data class UsageRecord(
 
     /** Battery percentage (0-100) */
     @ColumnInfo(name = "battery_level")
-    val batteryLevel: Int
+    val batteryLevel: Int,
+
+    /** UUID identifying the device (for multi-device datasets) */
+    @ColumnInfo(name = "device_id")
+    val deviceId: String = "",
+
+    /** Signal strength in dBm (e.g., -85). -999 if unavailable */
+    @ColumnInfo(name = "signal_strength")
+    val signalStrength: Int = -999,
+
+    /** 1 if device is charging, 0 if on battery */
+    @ColumnInfo(name = "is_charging")
+    val isCharging: Int = 0,
+
+    /** Device manufacturer + model (e.g., "Samsung SM-A546E") */
+    @ColumnInfo(name = "device_model")
+    val deviceModel: String = ""
 )

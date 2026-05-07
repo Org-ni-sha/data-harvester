@@ -19,6 +19,13 @@
     <!-- Show foreground service notification (Android 13+ / API 33) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Per-app usage stats via NetworkStatsManager (requires Settings grant) -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Signal strength reading on some Android versions -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
     <!-- ── Application ── -->
 
     <application
