@@ -6,6 +6,7 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import android.telephony.TelephonyManager
 import android.util.Log
@@ -121,6 +122,91 @@ class DeviceInfoHelper(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to determine cellular type", e)
             "CELLULAR"
+        }
+    }
+
+    /**
+     * Get the current signal strength in dBm.
+     *
+     * Uses TelephonyManager.getSignalStrength() on API 28+.
+     * Falls back to CellInfo-based reading on older APIs.
+     * Returns -999 if unable to read signal strength.
+     */
+    fun getSignalStrength(): Int {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                // API 28+: Use getSignalStrength() directly
+                val signalStrength = tm.signalStrength
+                if (signalStrength != null) {
+                    // getLevel() returns 0-4, but we want dBm for richer data
+                    // Try to get dBm from CellSignalStrength objects
+                    val cellSignalStrengths = signalStrength.cellSignalStrengths
+                    if (cellSignalStrengths.isNotEmpty()) {
+                        cellSignalStrengths[0].dbm
+                    } else {
+                        -999
+                    }
+                } else {
+                    -999
+                }
+            } else {
+                // API 23-27: Try to get from CellInfo
+                @Suppress("MissingPermission")
+                val cellInfoList = tm.allCellInfo
+                if (cellInfoList != null && cellInfoList.isNotEmpty()) {
+                    val cellInfo = cellInfoList[0]
+                    when (cellInfo) {
+                        is android.telephony.CellInfoLte ->
+                            cellInfo.cellSignalStrength.dbm
+                        is android.telephony.CellInfoWcdma ->
+                            cellInfo.cellSignalStrength.dbm
+                        is android.telephony.CellInfoGsm ->
+                            cellInfo.cellSignalStrength.dbm
+                        else -> -999
+                    }
+                } else {
+                    -999
+                }
+            }
+        } catch (e: SecurityException) {
+            Log.d(TAG, "Cannot read signal strength (no permission)")
+            -999
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read signal strength", e)
+            -999
+        }
+    }
+
+    /**
+     * Check if the device is currently charging (USB, AC, or wireless).
+     */
+    fun isCharging(): Boolean {
+        return try {
+            val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let {
+                context.registerReceiver(null, it)
+            }
+            val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                    status == BatteryManager.BATTERY_STATUS_FULL
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read charging state", e)
+            false
+        }
+    }
+
+    /**
+     * Get the device model string (manufacturer + model).
+     * E.g., "Samsung SM-A546E", "Google Pixel 8"
+     */
+    fun getDeviceModel(): String {
+        val manufacturer = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+        val model = Build.MODEL
+        return if (model.startsWith(manufacturer, ignoreCase = true)) {
+            model
+        } else {
+            "$manufacturer $model"
         }
     }
 }

@@ -14,8 +14,11 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import com.capstone.dataharvester.data.AppDatabase
+import com.capstone.dataharvester.data.AppUsageRecord
 import com.capstone.dataharvester.data.UsageRecord
+import com.capstone.dataharvester.util.DeviceIdManager
 import com.capstone.dataharvester.util.DeviceInfoHelper
+import com.capstone.dataharvester.util.NetworkStatsHelper
 import com.capstone.dataharvester.util.TrafficStatsHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,14 +30,23 @@ import java.util.Calendar
 import java.util.Locale
 
 /**
- * Foreground Service that collects mobile data usage every 2 minutes.
+ * Foreground Service that collects mobile data usage at two intervals:
+ *
+ * 1. **Primary collection** (every 30 seconds):
+ *    Uses TrafficStats for device-wide data usage + sensor readings
+ *    (battery, screen, network type, signal strength, charging state)
+ *
+ * 2. **Per-app collection** (every 10 minutes):
+ *    Uses NetworkStatsManager for per-app (per-UID) data usage breakdown.
+ *    Requires PACKAGE_USAGE_STATS permission granted via Settings.
  *
  * How it works:
- *  1. Uses a Handler with postDelayed() to run a collection tick every 2 minutes
- *  2. Each tick reads TrafficStats byte counters, device state (battery, screen, network)
- *  3. Computes interval deltas and temporal features (hour, day_of_week, etc.)
+ *  1. Uses a Handler with postDelayed() to run collection ticks
+ *  2. Each tick reads TrafficStats byte counters, device state
+ *  3. Computes interval deltas and temporal features
  *  4. Inserts one UsageRecord row into Room database
- *  5. Updates the persistent notification with current stats
+ *  5. Every 10 minutes, queries NetworkStatsManager for per-app usage
+ *  6. Updates the persistent notification with current stats
  *
  * Reboot handling:
  *  - Last known cumulative TrafficStats values are saved to SharedPreferences
@@ -52,18 +64,22 @@ class DataCollectionService : Service() {
         const val TAG = "DataCollectionService"
         const val CHANNEL_ID = "data_harvester_channel"
         const val NOTIFICATION_ID = 1
-        const val COLLECTION_INTERVAL_MS = 30_000L // 30 seconds sa ni sya karun 120_000L 2 minutes
+        const val COLLECTION_INTERVAL_MS = 30_000L // 30 seconds (change to 120_000L for 2 minutes)
+        const val APP_COLLECTION_INTERVAL_MS = 600_000L // 10 minutes for per-app collection
 
         // SharedPreferences keys for reboot recovery
         const val PREFS_NAME = "data_harvester_prefs"
         const val PREF_LAST_CUMULATIVE_RX = "last_cumulative_rx"
         const val PREF_LAST_CUMULATIVE_TX = "last_cumulative_tx"
         const val PREF_IS_COLLECTING = "is_collecting"
+        const val PREF_LAST_APP_COLLECTION_TIME = "last_app_collection_time"
     }
 
     private lateinit var handler: Handler
     private lateinit var trafficHelper: TrafficStatsHelper
     private lateinit var deviceHelper: DeviceInfoHelper
+    private lateinit var networkStatsHelper: NetworkStatsHelper
+    private lateinit var deviceIdManager: DeviceIdManager
     private lateinit var prefs: SharedPreferences
 
     // Coroutine scope for database operations (IO dispatcher)
@@ -73,11 +89,19 @@ class DataCollectionService : Service() {
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     private val dateOnlyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
-    /** The repeating collection task */
+    /** The repeating primary collection task (TrafficStats, every 30s) */
     private val collectionRunnable = object : Runnable {
         override fun run() {
             collectData()
             handler.postDelayed(this, COLLECTION_INTERVAL_MS)
+        }
+    }
+
+    /** The repeating per-app collection task (NetworkStatsManager, every 10 min) */
+    private val appCollectionRunnable = object : Runnable {
+        override fun run() {
+            collectAppData()
+            handler.postDelayed(this, APP_COLLECTION_INTERVAL_MS)
         }
     }
 
@@ -86,6 +110,8 @@ class DataCollectionService : Service() {
         handler = Handler(Looper.getMainLooper())
         trafficHelper = TrafficStatsHelper()
         deviceHelper = DeviceInfoHelper(this)
+        networkStatsHelper = NetworkStatsHelper(this)
+        deviceIdManager = DeviceIdManager(this)
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
         // Restore last known cumulative values for reboot detection
@@ -94,7 +120,7 @@ class DataCollectionService : Service() {
         trafficHelper.initializeFromSavedState(lastRx, lastTx)
 
         createNotificationChannel()
-        Log.i(TAG, "Service created")
+        Log.i(TAG, "Service created (device_id: ${deviceIdManager.getDeviceId()})")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -105,17 +131,25 @@ class DataCollectionService : Service() {
         // Mark as collecting in prefs (for UI state restoration)
         prefs.edit().putBoolean(PREF_IS_COLLECTING, true).apply()
 
-        // Start the 2-minute collection loop
+        // Start the primary collection loop (TrafficStats, every 30s)
         handler.removeCallbacks(collectionRunnable) // Prevent duplicate callbacks
         handler.post(collectionRunnable)
 
-        Log.i(TAG, "Data collection started (interval: ${COLLECTION_INTERVAL_MS / 1000}s)")
+        // Start the per-app collection loop (NetworkStatsManager, every 10 min)
+        handler.removeCallbacks(appCollectionRunnable)
+        // Delay first per-app collection by 30s to avoid startup spike
+        handler.postDelayed(appCollectionRunnable, 30_000L)
+
+        Log.i(TAG, "Data collection started " +
+                "(primary: ${COLLECTION_INTERVAL_MS / 1000}s, " +
+                "per-app: ${APP_COLLECTION_INTERVAL_MS / 1000}s)")
         return START_STICKY // Restart service if killed by the system
     }
 
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(collectionRunnable)
+        handler.removeCallbacks(appCollectionRunnable)
         serviceScope.cancel()
         prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
         Log.i(TAG, "Data collection stopped")
@@ -126,7 +160,7 @@ class DataCollectionService : Service() {
     // ─── Core Collection Logic ─────────────────────────────────────────────
 
     /**
-     * Single collection tick. Called every 2 minutes by the Handler.
+     * Single collection tick. Called every 30 seconds by the Handler.
      * Reads all data sources, computes features, and inserts a record.
      */
     private fun collectData() {
@@ -147,6 +181,10 @@ class DataCollectionService : Service() {
                 val batteryLevel = deviceHelper.getBatteryLevel()
                 val screenOn = deviceHelper.isScreenOn()
                 val networkType = deviceHelper.getNetworkType()
+                val signalStrength = deviceHelper.getSignalStrength()
+                val charging = deviceHelper.isCharging()
+                val deviceModel = deviceHelper.getDeviceModel()
+                val deviceId = deviceIdManager.getDeviceId()
 
                 // ── 4. Compute temporal features ──
                 val now = Calendar.getInstance()
@@ -191,15 +229,21 @@ class DataCollectionService : Service() {
                     cumulativeMbToday = cumulativeMbToday,
                     networkType = networkType,
                     screenOn = if (screenOn) 1 else 0,
-                    batteryLevel = batteryLevel
+                    batteryLevel = batteryLevel,
+                    deviceId = deviceId,
+                    signalStrength = signalStrength,
+                    isCharging = if (charging) 1 else 0,
+                    deviceModel = deviceModel
                 )
 
                 dao.insert(record)
 
                 // ── 7. Update notification with current stats ──
                 val count = dao.getCount()
+                val appCount = AppDatabase.getInstance(this@DataCollectionService)
+                    .appUsageDao().getCount()
                 updateNotification(
-                    "📊 $count records | Today: ${"%.1f".format(cumulativeMbToday)} MB"
+                    "📊 $count records | Apps: $appCount | Today: ${"%.1f".format(cumulativeMbToday)} MB"
                 )
 
                 // Log for debugging
@@ -209,7 +253,8 @@ class DataCollectionService : Service() {
                     Log.i(
                         TAG,
                         "Record #$count: +${"%.3f".format(mbUsedThisTick)} MB " +
-                        "(${delta.bytesTotal} bytes) | Today: ${"%.1f".format(cumulativeMbToday)} MB"
+                        "(${delta.bytesTotal} bytes) | Signal: ${signalStrength}dBm | " +
+                        "Charging: $charging | Today: ${"%.1f".format(cumulativeMbToday)} MB"
                     )
                 }
 
@@ -218,6 +263,72 @@ class DataCollectionService : Service() {
                 stopSelf()
             } catch (e: Exception) {
                 Log.e(TAG, "Collection tick failed — skipping this interval", e)
+            }
+        }
+    }
+
+    // ─── Per-App Collection Logic ──────────────────────────────────────────
+
+    /**
+     * Per-app collection tick. Called every 10 minutes by the Handler.
+     * Uses NetworkStatsManager to query per-UID data usage.
+     */
+    private fun collectAppData() {
+        serviceScope.launch {
+            try {
+                if (!networkStatsHelper.hasUsageAccessPermission()) {
+                    Log.w(TAG, "Per-app collection skipped — Usage Access not granted")
+                    return@launch
+                }
+
+                val now = System.currentTimeMillis()
+                val lastCollectionTime = prefs.getLong(
+                    PREF_LAST_APP_COLLECTION_TIME,
+                    now - APP_COLLECTION_INTERVAL_MS // Default: look back one interval
+                )
+
+                // Query per-app usage since last collection
+                val snapshots = networkStatsHelper.queryAppUsage(lastCollectionTime, now)
+
+                if (snapshots.isEmpty()) {
+                    Log.d(TAG, "Per-app collection: no usage data in interval")
+                    prefs.edit().putLong(PREF_LAST_APP_COLLECTION_TIME, now).apply()
+                    return@launch
+                }
+
+                // Build records
+                val datetimeStr = isoFormat.format(now)
+                val deviceId = deviceIdManager.getDeviceId()
+
+                val records = snapshots.map { snapshot ->
+                    AppUsageRecord(
+                        timestamp = now,
+                        datetimeStr = datetimeStr,
+                        deviceId = deviceId,
+                        packageName = snapshot.packageName,
+                        appName = snapshot.appName,
+                        uid = snapshot.uid,
+                        bytesRx = snapshot.bytesRx,
+                        bytesTx = snapshot.bytesTx,
+                        bytesTotal = snapshot.bytesTotal,
+                        networkType = snapshot.networkType,
+                        isSystemApp = if (snapshot.isSystemApp) 1 else 0
+                    )
+                }
+
+                // Batch insert
+                val dao = AppDatabase.getInstance(this@DataCollectionService).appUsageDao()
+                dao.insertAll(records)
+
+                // Save collection timestamp
+                prefs.edit().putLong(PREF_LAST_APP_COLLECTION_TIME, now).apply()
+
+                Log.i(TAG, "Per-app collection: inserted ${records.size} app records " +
+                        "(${records.count { it.isSystemApp == 1 }} system, " +
+                        "${records.count { it.isSystemApp == 0 }} user)")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Per-app collection tick failed — skipping", e)
             }
         }
     }
