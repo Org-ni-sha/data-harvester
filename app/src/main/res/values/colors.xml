@@ -1,10 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
+    <!-- ── Dark Theme Palette (matches DATAra logo aesthetic) ── -->
+
+    <!-- Backgrounds -->
+    <color name="dark_bg">#FF0A1628</color>
+    <color name="dark_surface">#FF121E36</color>
+    <color name="dark_surface_alt">#FF1A2844</color>
+
+    <!-- Accents (from logo nodes) -->
+    <color name="accent_blue">#FF2979FF</color>
+    <color name="accent_green">#FFCCFF00</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#FF8899BB</color>
+    <color name="text_hint">#FF4D5F80</color>
+
+    <!-- Status -->
+    <color name="status_active">#FF00E676</color>
+    <color name="status_stopped">#FF607D8B</color>
+
+    <!-- Actions -->
+    <color name="danger_red">#FFFF5252</color>
+    <color name="export_blue">#FF2979FF</color>
+
+    <!-- Legacy (kept for compatibility) -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
 </resources>
