@@ -39,9 +39,9 @@
         android:theme="@style/Theme.DataHarvester"
         tools:targetApi="36">
 
-        <!-- Main Activity (single screen) -->
+        <!-- Onboarding / Permission Gate (LAUNCHER) -->
         <activity
-            android:name=".MainActivity"
+            android:name=".OnboardingActivity"
             android:exported="true"
             android:label="@string/app_name">
             <intent-filter>
@@ -49,6 +49,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Dashboard (launched from Onboarding) -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:label="@string/app_name" />
 
         <!-- Data Collection Foreground Service -->
         <service

@@ -82,6 +82,9 @@ class DataCollectionService : Service() {
     private lateinit var deviceIdManager: DeviceIdManager
     private lateinit var prefs: SharedPreferences
 
+    // Track when service started (for runtime display in notification)
+    private var startTimeMs: Long = 0L
+
     // Coroutine scope for database operations (IO dispatcher)
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -127,6 +130,9 @@ class DataCollectionService : Service() {
         // Start as a foreground service with a persistent notification
         val notification = buildNotification("Starting data collection...")
         startForeground(NOTIFICATION_ID, notification)
+
+        // Record start time for runtime display
+        startTimeMs = System.currentTimeMillis()
 
         // Mark as collecting in prefs (for UI state restoration)
         prefs.edit().putBoolean(PREF_IS_COLLECTING, true).apply()
@@ -242,8 +248,9 @@ class DataCollectionService : Service() {
                 val count = dao.getCount()
                 val appCount = AppDatabase.getInstance(this@DataCollectionService)
                     .appUsageDao().getCount()
+                val runtime = formatElapsedTime(System.currentTimeMillis() - startTimeMs)
                 updateNotification(
-                    "📊 $count records | Apps: $appCount | Today: ${"%.1f".format(cumulativeMbToday)} MB"
+                    "$count records | Apps: $appCount | Today: ${"%.1f".format(cumulativeMbToday)} MB | $runtime"
                 )
 
                 // Log for debugging
@@ -381,5 +388,21 @@ class DataCollectionService : Service() {
         val notification = buildNotification(text)
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Format elapsed milliseconds into a human-readable runtime string.
+     * Examples: "0m 30s", "5m 0s", "1h 23m", "2h 5m"
+     */
+    private fun formatElapsedTime(elapsedMs: Long): String {
+        val totalSeconds = elapsedMs / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+
+        return when {
+            hours > 0 -> "${hours}h ${minutes}m"
+            else -> "${minutes}m ${seconds}s"
+        }
     }
 }

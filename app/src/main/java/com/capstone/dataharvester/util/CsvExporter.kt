@@ -8,9 +8,6 @@ import com.capstone.dataharvester.data.AppUsageRecord
 import com.capstone.dataharvester.data.UsageRecord
 import java.io.File
 import java.io.PrintWriter
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Exports usage records from Room database to CSV files in the Downloads folder.
@@ -19,20 +16,18 @@ import java.util.Locale
  *  1. **Main usage records** — device-wide TrafficStats data with sensor columns
  *  2. **Per-app usage records** — NetworkStatsManager per-UID data
  *
- * CSV format:
- * - RFC 4180 compliant (string values are quoted, quotes are escaped)
- * - Header row included
- * - Sorted by timestamp ascending (chronological order)
- * - Column names use snake_case matching the dataset schema
- *
- * Output files:
- * - Main:    Downloads/data_harvest_YYYYMMDD_HHmmss.csv
- * - Per-app: Downloads/app_usage_YYYYMMDD_HHmmss.csv
+ * CSV files use FIXED filenames and OVERWRITE on each export:
+ *  - Main:    Downloads/data_harvest.csv
+ *  - Per-app: Downloads/app_usage.csv
  */
 class CsvExporter(private val context: Context) {
 
     companion object {
         private const val TAG = "CsvExporter"
+
+        // Fixed filenames — overwrites on each export
+        const val MAIN_CSV_FILENAME = "data_harvest.csv"
+        const val APP_CSV_FILENAME = "app_usage.csv"
 
         // CSV Header — matches the updated dataset schema with new columns
         private const val CSV_HEADER =
@@ -49,6 +44,7 @@ class CsvExporter(private val context: Context) {
 
     /**
      * Export all main usage records to a CSV file in the Downloads directory.
+     * Overwrites any existing file with the same name.
      *
      * @return The exported File object
      * @throws Exception if export fails (disk full, permission denied, etc.)
@@ -57,24 +53,10 @@ class CsvExporter(private val context: Context) {
         val dao = AppDatabase.getInstance(context).usageDao()
         val records = dao.getAllAscending() // Chronological order
 
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val fileName = "data_harvest_$timestamp.csv"
-
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_DOWNLOADS
-        )
-        // Ensure Downloads directory exists
-        if (!downloadsDir.exists()) {
-            downloadsDir.mkdirs()
-        }
-
-        val file = File(downloadsDir, fileName)
+        val file = getDownloadsFile(MAIN_CSV_FILENAME)
 
         PrintWriter(file).use { writer ->
-            // Write header
             writer.println(CSV_HEADER)
-
-            // Write data rows
             for (record in records) {
                 writer.println(formatRow(record))
             }
@@ -86,6 +68,7 @@ class CsvExporter(private val context: Context) {
 
     /**
      * Export all per-app usage records to a CSV file in the Downloads directory.
+     * Overwrites any existing file with the same name.
      *
      * @return The exported File object
      * @throws Exception if export fails
@@ -94,21 +77,10 @@ class CsvExporter(private val context: Context) {
         val dao = AppDatabase.getInstance(context).appUsageDao()
         val records = dao.getAllAscending()
 
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val fileName = "app_usage_$timestamp.csv"
-
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_DOWNLOADS
-        )
-        if (!downloadsDir.exists()) {
-            downloadsDir.mkdirs()
-        }
-
-        val file = File(downloadsDir, fileName)
+        val file = getDownloadsFile(APP_CSV_FILENAME)
 
         PrintWriter(file).use { writer ->
             writer.println(APP_CSV_HEADER)
-
             for (record in records) {
                 writer.println(formatAppRow(record))
             }
@@ -116,6 +88,21 @@ class CsvExporter(private val context: Context) {
 
         Log.i(TAG, "Exported ${records.size} per-app records to ${file.absolutePath}")
         return file
+    }
+
+    /**
+     * Export BOTH main usage and per-app usage CSVs in one call.
+     *
+     * @return Pair of (mainCount, appCount) records exported
+     */
+    suspend fun exportAll(): Pair<Int, Int> {
+        val mainCount = getExportableCount()
+        val appCount = getAppExportableCount()
+
+        if (mainCount > 0) exportToCsv()
+        if (appCount > 0) exportAppUsageToCsv()
+
+        return Pair(mainCount, appCount)
     }
 
     /**
@@ -130,6 +117,20 @@ class CsvExporter(private val context: Context) {
      */
     suspend fun getAppExportableCount(): Int {
         return AppDatabase.getInstance(context).appUsageDao().getCount()
+    }
+
+    /**
+     * Get or create a file in the Downloads directory.
+     * If the file already exists, it will be overwritten by PrintWriter.
+     */
+    private fun getDownloadsFile(filename: String): File {
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS
+        )
+        if (!downloadsDir.exists()) {
+            downloadsDir.mkdirs()
+        }
+        return File(downloadsDir, filename)
     }
 
     /**

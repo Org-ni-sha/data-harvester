@@ -1,23 +1,20 @@
 package com.capstone.dataharvester
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.cardview.widget.CardView
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
-import com.capstone.dataharvester.util.NetworkStatsHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,23 +29,23 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Single-screen activity with:
- *  - Device ID display (UUID + model)
- *  - Status indicator (Collecting / Stopped)
- *  - Record count (main + per-app), today's usage, last record time
- *  - Start / Stop / Export CSV / Export App CSV buttons
- *  - Usage Access permission prompt card
+ * Dashboard activity — the main screen after onboarding.
  *
- * The UI auto-refreshes every 10 seconds to show updated stats.
+ * Features:
+ *  - Device ID display (UUID + model)
+ *  - Live status indicator with colored dot
+ *  - Stats grid: record counts, today's usage, last record time
+ *  - Start / Stop collection (side by side)
+ *  - Export All CSV (both main + per-app, fixed filenames, overwrite)
+ *  - Reset Data (confirmation dialog, clears both tables)
+ *
+ * Auto-refreshes stats every 10 seconds.
+ * All permission handling is done in OnboardingActivity.
  */
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val NOTIFICATION_PERMISSION_CODE = 100
-        private const val PHONE_STATE_PERMISSION_CODE = 101
-    }
-
     // Views
+    private lateinit var statusDot: View
     private lateinit var statusText: TextView
     private lateinit var recordCountText: TextView
     private lateinit var appRecordCountText: TextView
@@ -58,14 +55,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var deviceModelText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
-    private lateinit var exportButton: Button
-    private lateinit var exportAppCsvButton: Button
-    private lateinit var usageAccessCard: CardView
-    private lateinit var grantUsageAccessButton: Button
+    private lateinit var exportAllButton: Button
+    private lateinit var resetButton: Button
 
     // Helpers
     private lateinit var deviceIdManager: DeviceIdManager
-    private lateinit var networkStatsHelper: NetworkStatsHelper
 
     // Coroutine scope for UI updates
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -77,9 +71,9 @@ class MainActivity : AppCompatActivity() {
 
         // Initialize helpers
         deviceIdManager = DeviceIdManager(this)
-        networkStatsHelper = NetworkStatsHelper(this)
 
         // Bind views
+        statusDot = findViewById(R.id.statusDot)
         statusText = findViewById(R.id.statusText)
         recordCountText = findViewById(R.id.recordCountText)
         appRecordCountText = findViewById(R.id.appRecordCountText)
@@ -89,10 +83,11 @@ class MainActivity : AppCompatActivity() {
         deviceModelText = findViewById(R.id.deviceModelText)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
-        exportButton = findViewById(R.id.exportButton)
-        exportAppCsvButton = findViewById(R.id.exportAppCsvButton)
-        usageAccessCard = findViewById(R.id.usageAccessCard)
-        grantUsageAccessButton = findViewById(R.id.grantUsageAccessButton)
+        exportAllButton = findViewById(R.id.exportAllButton)
+        resetButton = findViewById(R.id.resetButton)
+
+        // Make the status dot circular
+        applyCircleDot()
 
         // Display device identity
         displayDeviceInfo()
@@ -100,19 +95,11 @@ class MainActivity : AppCompatActivity() {
         // Button click listeners
         startButton.setOnClickListener { startCollection() }
         stopButton.setOnClickListener { stopCollection() }
-        exportButton.setOnClickListener { exportCsv() }
-        exportAppCsvButton.setOnClickListener { exportAppCsv() }
-        grantUsageAccessButton.setOnClickListener { openUsageAccessSettings() }
+        exportAllButton.setOnClickListener { exportAllCsv() }
+        resetButton.setOnClickListener { confirmReset() }
 
-        // Request permissions
-        requestNotificationPermission()
-        requestPhoneStatePermission()
-
-        // Restore collection state from SharedPreferences
+        // Restore collection state
         restoreCollectionState()
-
-        // Check usage access permission
-        updateUsageAccessCard()
 
         // Initial UI update + start auto-refresh
         updateStats()
@@ -122,7 +109,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateStats()
-        updateUsageAccessCard()
     }
 
     override fun onDestroy() {
@@ -136,37 +122,8 @@ class MainActivity : AppCompatActivity() {
         val deviceId = deviceIdManager.getDeviceId()
         val deviceModel = deviceIdManager.getDeviceModel()
 
-        // Show truncated UUID for readability (first 8 chars)
         deviceIdText.text = "ID: $deviceId"
         deviceModelText.text = "Model: $deviceModel"
-    }
-
-    // ─── Usage Access Permission ──────────────────────────────────────────
-
-    private fun updateUsageAccessCard() {
-        if (networkStatsHelper.hasUsageAccessPermission()) {
-            usageAccessCard.visibility = android.view.View.GONE
-        } else {
-            usageAccessCard.visibility = android.view.View.VISIBLE
-        }
-    }
-
-    private fun openUsageAccessSettings() {
-        try {
-            val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-            startActivity(intent)
-            Toast.makeText(
-                this,
-                "Find \"Data Harvester\" and enable access",
-                Toast.LENGTH_LONG
-            ).show()
-        } catch (e: Exception) {
-            Toast.makeText(
-                this,
-                "❌ Could not open Usage Access settings",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
     }
 
     // ─── Collection Control ────────────────────────────────────────────────
@@ -180,28 +137,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateStatusUI(isCollecting = true)
-        Toast.makeText(this, "✅ Collection started", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Collection started", Toast.LENGTH_SHORT).show()
     }
 
     private fun stopCollection() {
         stopService(Intent(this, DataCollectionService::class.java))
 
         updateStatusUI(isCollecting = false)
-        Toast.makeText(this, "⏹ Collection stopped", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Collection stopped", Toast.LENGTH_SHORT).show()
     }
 
-    // ─── CSV Export ────────────────────────────────────────────────────────
+    // ─── Export All CSV ────────────────────────────────────────────────────
 
-    private fun exportCsv() {
-        exportButton.isEnabled = false
-        exportButton.text = "Exporting..."
+    private fun exportAllCsv() {
+        exportAllButton.isEnabled = false
+        exportAllButton.text = "Exporting..."
 
         mainScope.launch {
             try {
                 val exporter = CsvExporter(this@MainActivity)
-                val count = withContext(Dispatchers.IO) { exporter.getExportableCount() }
+                val mainCount = withContext(Dispatchers.IO) { exporter.getExportableCount() }
+                val appCount = withContext(Dispatchers.IO) { exporter.getAppExportableCount() }
 
-                if (count == 0) {
+                if (mainCount == 0 && appCount == 0) {
                     Toast.makeText(
                         this@MainActivity,
                         "No records to export",
@@ -210,62 +168,90 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                val file = withContext(Dispatchers.IO) { exporter.exportToCsv() }
+                val (exportedMain, exportedApp) = withContext(Dispatchers.IO) {
+                    exporter.exportAll()
+                }
 
                 Toast.makeText(
                     this@MainActivity,
-                    "✅ Exported $count records to Downloads/${file.name}",
+                    "Exported $exportedMain records + $exportedApp app records to Downloads/",
                     Toast.LENGTH_LONG
                 ).show()
 
             } catch (e: Exception) {
                 Toast.makeText(
                     this@MainActivity,
-                    "❌ Export failed: ${e.message}",
+                    "Export failed: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
             } finally {
-                exportButton.isEnabled = true
-                exportButton.text = "📤 EXPORT CSV"
+                exportAllButton.isEnabled = true
+                exportAllButton.text = "📤  EXPORT ALL CSV"
             }
         }
     }
 
-    private fun exportAppCsv() {
-        exportAppCsvButton.isEnabled = false
-        exportAppCsvButton.text = "Exporting..."
+    // ─── Reset Data ────────────────────────────────────────────────────────
 
+    private fun confirmReset() {
+        mainScope.launch {
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
+            val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("⚠️ Reset All Data?")
+                .setMessage(
+                    "This will permanently delete all collected records:\n\n" +
+                    "• $mainCount usage records\n" +
+                    "• $appCount per-app records\n\n" +
+                    "This action cannot be undone."
+                )
+                .setPositiveButton("RESET") { _, _ -> performReset() }
+                .setNegativeButton("CANCEL", null)
+                .show()
+        }
+    }
+
+    private fun performReset() {
         mainScope.launch {
             try {
-                val exporter = CsvExporter(this@MainActivity)
-                val count = withContext(Dispatchers.IO) { exporter.getAppExportableCount() }
+                // Stop collection first if running
+                stopService(Intent(this@MainActivity, DataCollectionService::class.java))
+                updateStatusUI(isCollecting = false)
 
-                if (count == 0) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "No per-app records to export",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    return@launch
+                val db = AppDatabase.getInstance(this@MainActivity)
+
+                withContext(Dispatchers.IO) {
+                    // Clear both tables
+                    db.usageDao().deleteAll()
+                    db.appUsageDao().deleteAll()
                 }
 
-                val file = withContext(Dispatchers.IO) { exporter.exportAppUsageToCsv() }
+                // Reset TrafficStats baselines in SharedPreferences
+                val prefs = getSharedPreferences(
+                    DataCollectionService.PREFS_NAME,
+                    Context.MODE_PRIVATE
+                )
+                prefs.edit()
+                    .putBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+                    .apply()
+
+                // Refresh UI
+                updateStats()
 
                 Toast.makeText(
                     this@MainActivity,
-                    "✅ Exported $count app records to Downloads/${file.name}",
-                    Toast.LENGTH_LONG
+                    "All data has been reset",
+                    Toast.LENGTH_SHORT
                 ).show()
 
             } catch (e: Exception) {
                 Toast.makeText(
                     this@MainActivity,
-                    "❌ App export failed: ${e.message}",
+                    "Reset failed: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
-            } finally {
-                exportAppCsvButton.isEnabled = true
-                exportAppCsvButton.text = "📤 EXPORT APP USAGE CSV"
             }
         }
     }
@@ -286,39 +272,53 @@ class MainActivity : AppCompatActivity() {
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
 
-                recordCountText.text = "Records: %,d".format(count)
-                appRecordCountText.text = "App Records: %,d".format(appCount)
-                todayUsageText.text = "Today: %.1f MB".format(todayMb)
+                recordCountText.text = "%,d".format(count)
+                appRecordCountText.text = "%,d".format(appCount)
+                todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {
-                    "Last: ${last.datetimeStr}"
+                    last.datetimeStr.substringAfter("T").substringBefore(".")
                 } else {
-                    "Last: No records yet"
+                    "—"
                 }
             } catch (e: Exception) {
-                recordCountText.text = "Records: --"
-                appRecordCountText.text = "App Records: --"
-                todayUsageText.text = "Today: -- MB"
-                lastRecordText.text = "Last: Error reading database"
+                recordCountText.text = "—"
+                appRecordCountText.text = "—"
+                todayUsageText.text = "— MB"
+                lastRecordText.text = "Error"
             }
         }
     }
 
     private fun updateStatusUI(isCollecting: Boolean) {
         if (isCollecting) {
-            statusText.text = "Status: ● Collecting"
-            statusText.setTextColor(
-                ContextCompat.getColor(this, android.R.color.holo_green_dark)
-            )
+            statusText.text = "Collecting"
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.status_active))
+            applyDotColor(R.color.status_active)
             startButton.isEnabled = false
+            startButton.alpha = 0.4f
             stopButton.isEnabled = true
+            stopButton.alpha = 1.0f
         } else {
-            statusText.text = "Status: ○ Stopped"
-            statusText.setTextColor(
-                ContextCompat.getColor(this, android.R.color.darker_gray)
-            )
+            statusText.text = "Stopped"
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.status_stopped))
+            applyDotColor(R.color.status_stopped)
             startButton.isEnabled = true
+            startButton.alpha = 1.0f
             stopButton.isEnabled = false
+            stopButton.alpha = 0.4f
         }
+    }
+
+    private fun applyCircleDot() {
+        val dot = GradientDrawable()
+        dot.shape = GradientDrawable.OVAL
+        dot.setColor(ContextCompat.getColor(this, R.color.status_stopped))
+        statusDot.background = dot
+    }
+
+    private fun applyDotColor(colorRes: Int) {
+        val dot = statusDot.background as? GradientDrawable
+        dot?.setColor(ContextCompat.getColor(this, colorRes))
     }
 
     private fun restoreCollectionState() {
@@ -336,71 +336,6 @@ class MainActivity : AppCompatActivity() {
             while (isActive) {
                 delay(10_000)
                 updateStats()
-                updateUsageAccessCard()
-            }
-        }
-    }
-
-    // ─── Permissions ───────────────────────────────────────────────────────
-
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    NOTIFICATION_PERMISSION_CODE
-                )
-            }
-        }
-    }
-
-    private fun requestPhoneStatePermission() {
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_PHONE_STATE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.READ_PHONE_STATE),
-                PHONE_STATE_PERMISSION_CODE
-            )
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            NOTIFICATION_PERMISSION_CODE -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Notification permission granted", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(
-                        this,
-                        "⚠️ Notification permission denied — service notification may not show",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-            PHONE_STATE_PERMISSION_CODE -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Phone state permission granted — signal strength available", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(
-                        this,
-                        "⚠️ Signal strength reading may be limited",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
             }
         }
     }
