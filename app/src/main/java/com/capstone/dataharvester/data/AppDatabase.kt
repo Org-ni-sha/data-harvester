@@ -17,10 +17,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v1: Initial schema with usage_records table
  *  - v2: Added device_id, signal_strength, is_charging, device_model columns
  *         to usage_records + new app_usage_records table
+ *  - v3: Added query_start column to app_usage_records for network-switch snapshots
  */
 @Database(
     entities = [UsageRecord::class, AppUsageRecord::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -66,6 +67,16 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from v2 to v3:
+         * - Adds query_start column to app_usage_records
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_usage_records ADD COLUMN query_start TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.
          */
@@ -76,7 +87,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "data_harvester_db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { INSTANCE = it }
             }

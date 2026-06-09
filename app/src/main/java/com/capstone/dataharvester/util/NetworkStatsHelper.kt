@@ -210,37 +210,102 @@ class NetworkStatsHelper(private val context: Context) {
 
     /**
      * Resolve a Linux UID to package name, app label, and system app flag.
-     * Falls back to "uid_XXXXX" if the package cannot be resolved.
+     *
+     * Resolution strategy (5 layers):
+     *  1. Known Android system UIDs (0=root, 1000=android, 1001=phone…)
+     *  2. Isolated process UID range (90000–99999) — always unresolvable by design
+     *  3. PackageManager.getPackagesForUid() — the primary path for user apps
+     *  4. Prefer the package with a launcher Activity (user-visible app)
+     *  5. Last-resort: record package name even if ApplicationInfo lookup fails
      */
     private fun resolveUid(uid: Int): ResolvedAppInfo {
-        val pm = context.packageManager
 
+        // ── Layer 1: Known Android system UIDs ──────────────────────────────
+        val knownSystemUids = mapOf(
+            0    to Pair("root",                        "Linux Kernel / Root"),
+            1000 to Pair("android",                     "Android System"),
+            1001 to Pair("com.android.phone",           "Phone / Radio"),
+            1002 to Pair("com.android.bluetooth",       "Bluetooth"),
+            1003 to Pair("com.android.shell",           "ADB Shell"),
+            1010 to Pair("wifi",                        "Wi-Fi Stack"),
+            1013 to Pair("mediaserver",                 "Media Server"),
+            1017 to Pair("keystore",                    "Keystore"),
+            1020 to Pair("gps",                         "GPS"),
+            1021 to Pair("update_map",                  "Update Maps"),
+            2000 to Pair("shell",                       "Shell"),
+            9999 to Pair("com.android.networkstack",    "Network Stack")
+        )
+        knownSystemUids[uid]?.let { (pkg, name) ->
+            return ResolvedAppInfo(packageName = pkg, appName = name, isSystemApp = true)
+        }
+
+        // ── Layer 2: Isolated process UID range ─────────────────────────────
+        // Android assigns isolated sandbox processes UIDs in the range 90000–99999.
+        // getPackagesForUid() always returns null for these — by design.
+        // They represent WebView renderers, Chrome tab processes, etc.
+        if (uid in 90000..99999) {
+            return ResolvedAppInfo(
+                packageName = "android.isolated_process",
+                appName     = "Isolated Process",
+                isSystemApp = true
+            )
+        }
+
+        // ── Layer 3 + 4: PackageManager lookup with smart package selection ─
+        val pm = context.packageManager
         try {
             val packages = pm.getPackagesForUid(uid)
-            if (packages != null && packages.isNotEmpty()) {
-                val packageName = packages[0]
-                val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    pm.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
-                } else {
-                    @Suppress("DEPRECATION")
-                    pm.getApplicationInfo(packageName, 0)
+            if (!packages.isNullOrEmpty()) {
+
+                // Layer 4: Prefer the package that has a launcher Activity
+                // (i.e., the user-facing app), otherwise fall back to packages[0]
+                val preferredPackage = packages.firstOrNull { pkg ->
+                    val launchIntent = android.content.Intent(
+                        android.content.Intent.ACTION_MAIN
+                    ).apply {
+                        addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                        setPackage(pkg)
+                    }
+                    pm.queryIntentActivities(launchIntent, 0).isNotEmpty()
+                } ?: packages[0]
+
+                // ── Layer 5: Graceful fallback if ApplicationInfo fails ──────
+                val appInfo = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        pm.getApplicationInfo(
+                            preferredPackage,
+                            PackageManager.ApplicationInfoFlags.of(0)
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pm.getApplicationInfo(preferredPackage, 0)
+                    }
+                } catch (e: PackageManager.NameNotFoundException) {
+                    // Package exists (getPackagesForUid returned it) but ApplicationInfo
+                    // is unavailable — record the package name we do have
+                    Log.d(TAG, "ApplicationInfo not found for $preferredPackage (UID $uid), using package name as label")
+                    return ResolvedAppInfo(
+                        packageName = preferredPackage,
+                        appName     = preferredPackage.substringAfterLast('.').replaceFirstChar { it.uppercase() },
+                        isSystemApp = uid < 10000
+                    )
                 }
-                val appName = pm.getApplicationLabel(appInfo).toString()
+
+                val appName  = pm.getApplicationLabel(appInfo).toString()
                 val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
 
-                return ResolvedAppInfo(packageName, appName, isSystem)
+                return ResolvedAppInfo(preferredPackage, appName, isSystem)
             }
-        } catch (e: PackageManager.NameNotFoundException) {
-            Log.d(TAG, "Package not found for UID $uid")
         } catch (e: Exception) {
             Log.d(TAG, "Could not resolve UID $uid: ${e.message}")
         }
 
-        // Fallback for unresolvable UIDs (removed apps, kernel, etc.)
+        // ── Final fallback: unresolvable UID ────────────────────────────────
+        // Still record useful data: UIDs < 10000 are always Android system processes
         return ResolvedAppInfo(
             packageName = "uid_$uid",
-            appName = "Unknown (UID $uid)",
-            isSystemApp = true // Assume system for unresolvable UIDs
+            appName     = "Unknown (UID $uid)",
+            isSystemApp = uid < 10000
         )
     }
 }
