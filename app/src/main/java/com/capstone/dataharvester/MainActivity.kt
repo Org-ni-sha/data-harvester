@@ -226,6 +226,9 @@ class MainActivity : AppCompatActivity() {
                     // Clear both tables
                     db.usageDao().deleteAll()
                     db.appUsageDao().deleteAll()
+
+                    // Delete stale CSV files from Downloads
+                    CsvExporter(this@MainActivity).deleteExportedFiles()
                 }
 
                 // Reset TrafficStats baselines in SharedPreferences

@@ -26,6 +26,16 @@
     <!-- Signal strength reading on some Android versions -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
+    <!--
+        Package visibility (Android 11+ / API 30+).
+        Without this, PackageManager.getPackagesForUid() returns null for
+        virtually all third-party apps due to scoped package visibility rules,
+        causing every app to be labelled "Unknown".
+        Safe for a research/capstone app not distributed via Play Store.
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <!-- ── Application ── -->
 
     <application

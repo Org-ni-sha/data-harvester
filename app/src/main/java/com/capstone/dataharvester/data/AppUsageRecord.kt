@@ -57,6 +57,10 @@ data class AppUsageRecord(
     @ColumnInfo(name = "network_type")
     val networkType: String,
 
+    /** ISO 8601 datetime string for the start of the query window */
+    @ColumnInfo(name = "query_start")
+    val queryStart: String = "",
+
     /** 1 if system/pre-installed app, 0 if user-installed */
     @ColumnInfo(name = "is_system_app")
     val isSystemApp: Int

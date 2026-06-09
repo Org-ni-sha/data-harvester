@@ -8,6 +8,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -27,6 +30,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -36,9 +40,11 @@ import java.util.Locale
  *    Uses TrafficStats for device-wide data usage + sensor readings
  *    (battery, screen, network type, signal strength, charging state)
  *
- * 2. **Per-app collection** (every 10 minutes):
+ * 2. **Per-app collection** (every 10 minutes + on network switch):
  *    Uses NetworkStatsManager for per-app (per-UID) data usage breakdown.
  *    Requires PACKAGE_USAGE_STATS permission granted via Settings.
+ *    Also triggers immediately on WiFi ↔ Mobile switches so each snapshot
+ *    covers exactly one network type (clean labels for ML dataset).
  *
  * How it works:
  *  1. Uses a Handler with postDelayed() to run collection ticks
@@ -46,7 +52,8 @@ import java.util.Locale
  *  3. Computes interval deltas and temporal features
  *  4. Inserts one UsageRecord row into Room database
  *  5. Every 10 minutes, queries NetworkStatsManager for per-app usage
- *  6. Updates the persistent notification with current stats
+ *  6. On network switch (WiFi ↔ Mobile), immediately snapshots per-app data
+ *  7. Updates the persistent notification with current stats
  *
  * Reboot handling:
  *  - Last known cumulative TrafficStats values are saved to SharedPreferences
@@ -66,6 +73,9 @@ class DataCollectionService : Service() {
         const val NOTIFICATION_ID = 1
         const val COLLECTION_INTERVAL_MS = 30_000L // 30 seconds (change to 120_000L for 2 minutes)
         const val APP_COLLECTION_INTERVAL_MS = 600_000L // 10 minutes for per-app collection
+
+        // Minimum interval between network-switch-triggered collections (debounce)
+        const val MIN_SWITCH_INTERVAL_MS = 5_000L // 5 seconds
 
         // SharedPreferences keys for reboot recovery
         const val PREFS_NAME = "data_harvester_prefs"
@@ -91,6 +101,13 @@ class DataCollectionService : Service() {
     // Date formatters (reused to avoid repeated allocation)
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     private val dateOnlyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+
+    // ─── Network Switch Detection ──────────────────────────────────────────
+    // Tracks current network type so we can detect WiFi ↔ Mobile switches
+    // and trigger an immediate per-app snapshot for clean network labels.
+    private var currentNetworkType: String? = null
+    private var lastNetworkSwitchCollectionTime: Long = 0L
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     /** The repeating primary collection task (TrafficStats, every 30s) */
     private val collectionRunnable = object : Runnable {
@@ -146,9 +163,13 @@ class DataCollectionService : Service() {
         // Delay first per-app collection by 30s to avoid startup spike
         handler.postDelayed(appCollectionRunnable, 30_000L)
 
+        // Register network switch callback for clean per-app snapshots
+        registerNetworkCallback()
+
         Log.i(TAG, "Data collection started " +
                 "(primary: ${COLLECTION_INTERVAL_MS / 1000}s, " +
-                "per-app: ${APP_COLLECTION_INTERVAL_MS / 1000}s)")
+                "per-app: ${APP_COLLECTION_INTERVAL_MS / 1000}s, " +
+                "network-switch: enabled)")
         return START_STICKY // Restart service if killed by the system
     }
 
@@ -156,12 +177,102 @@ class DataCollectionService : Service() {
         super.onDestroy()
         handler.removeCallbacks(collectionRunnable)
         handler.removeCallbacks(appCollectionRunnable)
+        unregisterNetworkCallback()
         serviceScope.cancel()
         prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
         Log.i(TAG, "Data collection stopped")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // ─── Network Switch Detection ──────────────────────────────────────────
+
+    /**
+     * Register a ConnectivityManager callback that detects WiFi ↔ Mobile switches.
+     * When a switch is detected, immediately triggers a per-app collection snapshot
+     * so that each snapshot covers exactly one network type (clean labels).
+     *
+     * The callback debounces rapid switches (min 5s between triggered collections).
+     */
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        // Initialize current network type BEFORE registering callback
+        // so the initial onAvailable doesn't trigger a false switch
+        currentNetworkType = detectCurrentNetworkType(cm)
+        Log.i(TAG, "Initial network type: $currentNetworkType")
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val newType = when {
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "MOBILE"
+                    else -> "OTHER"
+                }
+
+                val previousType = currentNetworkType
+                if (previousType != null && previousType != newType && previousType != "NONE") {
+                    currentNetworkType = newType
+
+                    // Debounce: don't trigger if we just triggered recently
+                    val now = System.currentTimeMillis()
+                    if (now - lastNetworkSwitchCollectionTime > MIN_SWITCH_INTERVAL_MS) {
+                        lastNetworkSwitchCollectionTime = now
+                        Log.i(TAG, "Network switch: $previousType → $newType — triggering per-app snapshot")
+                        collectAppData()
+                    }
+                } else {
+                    currentNetworkType = newType
+                }
+            }
+
+            override fun onLost(network: Network) {
+                val previousType = currentNetworkType
+                currentNetworkType = "NONE"
+
+                if (previousType != null && previousType != "NONE") {
+                    val now = System.currentTimeMillis()
+                    if (now - lastNetworkSwitchCollectionTime > MIN_SWITCH_INTERVAL_MS) {
+                        lastNetworkSwitchCollectionTime = now
+                        Log.i(TAG, "Network lost ($previousType) — triggering per-app snapshot")
+                        collectAppData()
+                    }
+                }
+            }
+        }
+
+        cm.registerDefaultNetworkCallback(callback)
+        networkCallback = callback
+    }
+
+    /**
+     * Unregister the network switch callback.
+     */
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let {
+            try {
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                cm.unregisterNetworkCallback(it)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to unregister network callback: ${e.message}")
+            }
+        }
+        networkCallback = null
+    }
+
+    /**
+     * Detect the current network type without registering a callback.
+     * Used to initialize [currentNetworkType] before callback registration.
+     */
+    private fun detectCurrentNetworkType(cm: ConnectivityManager): String {
+        val network = cm.activeNetwork ?: return "NONE"
+        val caps = cm.getNetworkCapabilities(network) ?: return "NONE"
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "MOBILE"
+            else -> "OTHER"
+        }
+    }
 
     // ─── Core Collection Logic ─────────────────────────────────────────────
 
@@ -277,8 +388,13 @@ class DataCollectionService : Service() {
     // ─── Per-App Collection Logic ──────────────────────────────────────────
 
     /**
-     * Per-app collection tick. Called every 10 minutes by the Handler.
+     * Per-app collection tick. Called every 10 minutes by the Handler,
+     * and also triggered immediately on network switches (WiFi ↔ Mobile).
      * Uses NetworkStatsManager to query per-UID data usage.
+     *
+     * Each snapshot covers the window [lastCollectionTime → now].
+     * The query_start field records the start of this window so each row
+     * has a clear, unambiguous time span.
      */
     private fun collectAppData() {
         serviceScope.launch {
@@ -303,8 +419,9 @@ class DataCollectionService : Service() {
                     return@launch
                 }
 
-                // Build records
+                // Build records with query_start for the collection window
                 val datetimeStr = isoFormat.format(now)
+                val queryStartStr = isoFormat.format(Date(lastCollectionTime))
                 val deviceId = deviceIdManager.getDeviceId()
 
                 val records = snapshots.map { snapshot ->
@@ -319,6 +436,7 @@ class DataCollectionService : Service() {
                         bytesTx = snapshot.bytesTx,
                         bytesTotal = snapshot.bytesTotal,
                         networkType = snapshot.networkType,
+                        queryStart = queryStartStr,
                         isSystemApp = if (snapshot.isSystemApp) 1 else 0
                     )
                 }
@@ -332,7 +450,8 @@ class DataCollectionService : Service() {
 
                 Log.i(TAG, "Per-app collection: inserted ${records.size} app records " +
                         "(${records.count { it.isSystemApp == 1 }} system, " +
-                        "${records.count { it.isSystemApp == 0 }} user)")
+                        "${records.count { it.isSystemApp == 0 }} user) " +
+                        "[window: $queryStartStr → $datetimeStr]")
 
             } catch (e: Exception) {
                 Log.e(TAG, "Per-app collection tick failed — skipping", e)
