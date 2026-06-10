@@ -3,6 +3,14 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val gitBranch: String = try {
+    val process = Runtime.getRuntime().exec(arrayOf("git", "rev-parse", "--abbrev-ref", "HEAD"))
+    val result = process.inputStream.bufferedReader().readText().trim()
+    if (result.isEmpty()) "main" else result
+} catch (e: Exception) {
+    "main"
+}
+
 android {
     namespace = "com.capstone.dataharvester"
     compileSdk = 36
@@ -15,7 +23,14 @@ android {
         versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        buildConfigField("String", "GIT_BRANCH", "\"$gitBranch\"")
     }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
 
     buildTypes {
         release {
