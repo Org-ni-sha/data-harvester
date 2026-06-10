@@ -285,6 +285,18 @@
 
         </LinearLayout>
 
+        <!-- ── Upload to Cloud ── -->
+        <Button
+            android:id="@+id/uploadButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="☁️ UPLOAD TO CLOUD"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="@color/white"
+            android:backgroundTint="@color/accent_blue"
+            android:layout_marginBottom="12dp" />
+
         <!-- ── Export All CSV ── -->
         <Button
             android:id="@+id/exportAllButton"

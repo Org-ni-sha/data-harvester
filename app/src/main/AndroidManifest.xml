@@ -4,6 +4,9 @@
 
     <!-- ── Permissions ── -->
 
+    <!-- Allow app to connect to the cloud database -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Foreground service (all Android versions) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 

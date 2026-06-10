@@ -27,6 +27,14 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.capstone.dataharvester.sync.CloudSyncManager
+import com.capstone.dataharvester.sync.SyncWorker
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
 
 /**
  * Dashboard activity — the main screen after onboarding.
@@ -55,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var deviceModelText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var uploadButton: Button
     private lateinit var exportAllButton: Button
     private lateinit var resetButton: Button
 
@@ -82,7 +91,8 @@ class MainActivity : AppCompatActivity() {
         deviceIdText = findViewById(R.id.deviceIdText)
         deviceModelText = findViewById(R.id.deviceModelText)
         startButton = findViewById(R.id.startButton)
-        stopButton = findViewById(R.id.stopButton)
+        stopButton = findViewById(R.id.stopButton)  
+        uploadButton = findViewById(R.id.uploadButton)
         exportAllButton = findViewById(R.id.exportAllButton)
         resetButton = findViewById(R.id.resetButton)
 
@@ -95,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         // Button click listeners
         startButton.setOnClickListener { startCollection() }
         stopButton.setOnClickListener { stopCollection() }
+        uploadButton.setOnClickListener { syncToCloud() }
         exportAllButton.setOnClickListener { exportAllCsv() }
         resetButton.setOnClickListener { confirmReset() }
 
@@ -104,6 +115,9 @@ class MainActivity : AppCompatActivity() {
         // Initial UI update + start auto-refresh
         updateStats()
         startAutoRefresh()
+
+        // Schedule cloud synchronization
+        setupCloudSync()
     }
 
     override fun onResume() {
@@ -342,4 +356,48 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun setupCloudSync() {
+        // Only sync when device is connected to the internet
+        val syncConstraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        // Schedule to run every 15 minutes (minimum interval allowed by Android)
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(syncConstraints)
+            .build()
+
+        // Queue the work. KEEP ensures we don't restart the timer if the app is opened again.
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "CloudSQLiteSync",
+            ExistingPeriodicWorkPolicy.KEEP,
+            syncRequest
+        )
+    }
+    
+    private fun syncToCloud() {
+        uploadButton.isEnabled = false
+        uploadButton.text = "Uploading..."
+        
+        mainScope.launch {
+            val syncManager = CloudSyncManager(this@MainActivity)
+            val resultCount = withContext(Dispatchers.IO) {
+                syncManager.syncPendingData()
+            }
+            
+            if (resultCount > 0) {
+                Toast.makeText(this@MainActivity, "Uploaded $resultCount records successfully!", Toast.LENGTH_SHORT).show()
+                updateStats() // Update the stats count on screen
+            } else if (resultCount == 0) {
+                Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@MainActivity, "Upload failed! Check internet connection and logs.", Toast.LENGTH_LONG).show()
+            }
+            
+            uploadButton.isEnabled = true
+            uploadButton.text = "☁️ UPLOAD TO CLOUD"
+        }
+    }
+
 }
