@@ -29,6 +29,7 @@ import java.util.Date
 import java.util.Locale
 import com.capstone.dataharvester.sync.CloudSyncManager
 import com.capstone.dataharvester.sync.SyncWorker
+import com.capstone.dataharvester.update.UpdateManager
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -118,6 +119,9 @@ class MainActivity : AppCompatActivity() {
 
         // Schedule cloud synchronization
         setupCloudSync()
+
+        // Check for remote app updates
+        UpdateManager(this).checkForUpdates()
     }
 
     override fun onResume() {

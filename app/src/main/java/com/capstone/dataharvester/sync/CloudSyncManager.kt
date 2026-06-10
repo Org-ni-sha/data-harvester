@@ -53,13 +53,19 @@ class CloudSyncManager(private val context: Context) {
         val totalSynced = unsyncedUsage.size + unsyncedAppUsage.size
         val deviceId = com.capstone.dataharvester.util.DeviceIdManager(context).getDeviceId()
         val uploadTime = System.currentTimeMillis()
+
+        // Generate date/time formats
+        val isoFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+        val stampFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        val datetimeStr = isoFormat.format(java.util.Date(uploadTime))
+        val datetimeStamp = stampFormat.format(java.util.Date(uploadTime))
         
         // Calculate size of SQL query script payload
         val payloadSizeBytes = sqlBuilder.toString().toByteArray(Charsets.UTF_8).size
         val payloadSizeKb = payloadSizeBytes
 
-        sqlBuilder.append("INSERT INTO upload_history (device_id, uploaded_timestamp, records_uploaded, payload_size_bytes, payload_size_kb) ")
-        sqlBuilder.append("VALUES ('$deviceId', $uploadTime, $totalSynced, $payloadSizeBytes, $payloadSizeKb);\n")
+        sqlBuilder.append("INSERT INTO upload_history (device_id, uploaded_timestamp, datetime_str, datetime_stamp, records_uploaded, payload_size_bytes, payload_size_kb) ")
+        sqlBuilder.append("VALUES ('$deviceId', $uploadTime, '$datetimeStr', '$datetimeStamp', $totalSynced, $payloadSizeBytes, $payloadSizeKb);\n")
 
         // 2. Perform HTTP request formatting as JSON (using native Android JSONObject)
         val jsonBody = org.json.JSONObject()

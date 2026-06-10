@@ -29,6 +29,9 @@
     <!-- Signal strength reading on some Android versions -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
+    <!-- Request permission to install packages -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!--
         Package visibility (Android 11+ / API 30+).
         Without this, PackageManager.getPackagesForUid() returns null for
@@ -83,6 +86,16 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
