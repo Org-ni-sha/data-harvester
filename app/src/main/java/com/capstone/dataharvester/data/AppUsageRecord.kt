@@ -63,5 +63,10 @@ data class AppUsageRecord(
 
     /** 1 if system/pre-installed app, 0 if user-installed */
     @ColumnInfo(name = "is_system_app")
-    val isSystemApp: Int
+    val isSystemApp: Int,
+
+    /** Flag indicating if this record has been synced to the backend */
+    @ColumnInfo(name = "is_synced")
+    val isSynced: Boolean = false
+
 )
