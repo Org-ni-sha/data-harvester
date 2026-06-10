@@ -18,10 +18,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v2: Added device_id, signal_strength, is_charging, device_model columns
  *         to usage_records + new app_usage_records table
  *  - v3: Added query_start column to app_usage_records for network-switch snapshots
+ *  - v4: Added upload_history table for tracking cloud sync operations
+ *  - v5: APK versioning for app updates
  */
 @Database(
     entities = [UsageRecord::class, AppUsageRecord::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

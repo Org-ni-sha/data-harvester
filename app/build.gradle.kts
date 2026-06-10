@@ -11,8 +11,8 @@ android {
         applicationId = "com.capstone.dataharvester"
         minSdk = 23
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -31,6 +31,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+base {
+    archivesName.set("DATAra-Harvester")
 }
 
 dependencies {
