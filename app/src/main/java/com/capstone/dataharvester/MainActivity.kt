@@ -120,8 +120,10 @@ class MainActivity : AppCompatActivity() {
         // Schedule cloud synchronization
         setupCloudSync()
 
-        // Check for remote app updates
-        UpdateManager(this).checkForUpdates()
+        // Check for remote app updates and show success notification if just updated
+        val updateManager = UpdateManager(this)
+        updateManager.checkAndNotifyIfUpdated()
+        updateManager.checkForUpdates()
     }
 
     override fun onResume() {
