@@ -9,7 +9,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.capstone.dataharvester.BuildConfig
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -83,6 +85,8 @@ class UpdateManager(private val context: Context) {
             if (testingBranch != currentBranch) {
                 branches.add(testingBranch)
             }
+            // Also try the general "testing" branch
+            branches.add("testing")
         }
         // If we are on a testing/ branch, try possible source branches next
         else if (currentBranch.startsWith("testing/")) {
@@ -90,6 +94,13 @@ class UpdateManager(private val context: Context) {
             branches.add("feat/$suffix")
             branches.add("mod/$suffix")
             branches.add("fix/$suffix")
+            // Also try the general "testing" branch
+            branches.add("testing")
+        }
+        
+        // For other development branches, ensure "testing" is checked before main
+        if (currentBranch != "testing" && !branches.contains("testing")) {
+            branches.add("testing")
         }
         
         // Always fallback to main

@@ -437,6 +437,8 @@ class DataCollectionService : Service() {
                         bytesTotal = snapshot.bytesTotal,
                         networkType = snapshot.networkType,
                         queryStart = queryStartStr,
+                        startTime = queryStartStr,
+                        endTime = datetimeStr,
                         isSystemApp = if (snapshot.isSystemApp) 1 else 0
                     )
                 }

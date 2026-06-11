@@ -47,7 +47,7 @@ class CsvExporter(private val context: Context) {
         // Per-app CSV Header
         private const val APP_CSV_HEADER =
             "id,timestamp,datetime,device_id,package_name,app_name," +
-            "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,is_system_app"
+            "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,start_time,end_time,is_system_app"
     }
 
     // ─── Public API ───────────────────────────────────────────────────────
@@ -312,6 +312,8 @@ class CsvExporter(private val context: Context) {
             r.bytesTotal.toString(),
             quote(r.networkType),
             quote(r.queryStart),
+            quote(r.startTime),
+            quote(r.endTime),
             r.isSystemApp.toString()
         ).joinToString(",")
     }
