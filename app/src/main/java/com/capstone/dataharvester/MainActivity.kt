@@ -369,15 +369,15 @@ class MainActivity : AppCompatActivity() {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        // Schedule to run every 15 minutes (minimum interval allowed by Android)
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+        // Schedule to run daily (every 24 hours)
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(24, TimeUnit.HOURS)
             .setConstraints(syncConstraints)
             .build()
 
-        // Queue the work. KEEP ensures we don't restart the timer if the app is opened again.
+        // Queue the work. UPDATE ensures that the new daily interval is applied if already scheduled.
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "CloudSQLiteSync",
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.UPDATE,
             syncRequest
         )
     }
