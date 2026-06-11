@@ -9,7 +9,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.capstone.dataharvester.BuildConfig
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -24,27 +26,114 @@ class UpdateManager(private val context: Context) {
 
     companion object {
         private const val TAG = "UpdateManager"
-        
-        // 1. Try testing branch first (for your testing environments)
-        private const val TESTING_UPDATE_JSON_URL = "https://raw.githubusercontent.com/saybbbb/Data-Harvester/testing/sqlite-cloud-sync/update.json"
-        
-        // 2. Fallback to main branch (production default)
-        private const val MAIN_UPDATE_JSON_URL = "https://raw.githubusercontent.com/saybbbb/Data-Harvester/main/update.json"
     }
 
     private val client = OkHttpClient()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
+     * Checks if the app was recently updated. If it was, shows a notification toast
+     * to the user indicating the update was successful.
+     */
+    fun checkAndNotifyIfUpdated() {
+        try {
+            val sharedPreferences = context.getSharedPreferences("UpdatePrefs", Context.MODE_PRIVATE)
+            val lastVersionCode = sharedPreferences.getInt("last_version_code", -1)
+
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val currentVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                packageInfo.versionCode
+            }
+            val currentVersionName = packageInfo.versionName ?: "unknown"
+
+            if (lastVersionCode != -1 && currentVersionCode > lastVersionCode) {
+                mainHandler.post {
+                    Toast.makeText(
+                        context,
+                        "🎉 DATAra Harvester successfully updated to v$currentVersionName!",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                Log.i(TAG, "App successfully updated from version code $lastVersionCode to $currentVersionCode.")
+            }
+
+            // Save the new current version code
+            sharedPreferences.edit().putInt("last_version_code", currentVersionCode).apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking version for post-update notification", e)
+        }
+    }
+
+    /**
+     * Helper to compute the candidate branches for update checking in priority order.
+     */
+    private fun getCandidateBranches(currentBranch: String): List<String> {
+        val branches = mutableListOf<String>()
+        
+        // Always try the current branch first
+        branches.add(currentBranch)
+        
+        // If we are on a feat/, mod/, or fix/ branch, try the corresponding testing/ branch next
+        if (currentBranch.startsWith("feat/") || currentBranch.startsWith("mod/") || currentBranch.startsWith("fix/")) {
+            val suffix = currentBranch.substringAfter("/")
+            val testingBranch = "testing/$suffix"
+            if (testingBranch != currentBranch) {
+                branches.add(testingBranch)
+            }
+            // Also try the general "testing" branch
+            branches.add("testing")
+        }
+        // If we are on a testing/ branch, try possible source branches next
+        else if (currentBranch.startsWith("testing/")) {
+            val suffix = currentBranch.substringAfter("/")
+            branches.add("feat/$suffix")
+            branches.add("mod/$suffix")
+            branches.add("fix/$suffix")
+            // Also try the general "testing" branch
+            branches.add("testing")
+        }
+        
+        // For other development branches, ensure "testing" is checked before main
+        if (currentBranch != "testing" && !branches.contains("testing")) {
+            branches.add("testing")
+        }
+        
+        // Always fallback to main
+        if (!branches.contains("main")) {
+            branches.add("main")
+        }
+        
+        return branches.distinct()
+    }
+
+    /**
      * Checks the remote update.json to see if a newer version is available.
-     * First attempts to query the testing branch, and falls back to the main branch if it fails.
+     * Evaluates a chain of candidate branches dynamically starting from the active build branch.
      */
     fun checkForUpdates() {
-        fetchUpdateJson(TESTING_UPDATE_JSON_URL) {
-            Log.i(TAG, "Testing branch update check failed. Falling back to main branch...")
-            fetchUpdateJson(MAIN_UPDATE_JSON_URL) {
-                Log.w(TAG, "All update checks failed (testing and main branches are unavailable).")
-            }
+        val currentBranch = BuildConfig.GIT_BRANCH
+        val branches = getCandidateBranches(currentBranch)
+        Log.i(TAG, "Checking for updates. Active branch: $currentBranch. Candidates: $branches")
+        tryNextBranch(branches, 0)
+    }
+
+    private fun tryNextBranch(branches: List<String>, index: Int) {
+        if (index >= branches.size) {
+            Log.w(TAG, "All update checks failed (none of the branches are available or contain updates).")
+            return
+        }
+
+        val branch = branches[index]
+        val url = "https://raw.githubusercontent.com/saybbbb/Data-Harvester/$branch/update.json"
+        
+        Log.d(TAG, "Attempting update check for branch '$branch' at URL: $url")
+        fetchUpdateJson(url) {
+            // Failure callback: fallback to the next candidate branch
+            Log.i(TAG, "Update check failed or no branch config at: $url. Trying next fallback...")
+            tryNextBranch(branches, index + 1)
         }
     }
 
