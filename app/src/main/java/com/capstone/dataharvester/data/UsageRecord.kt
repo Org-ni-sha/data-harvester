@@ -87,5 +87,10 @@ data class UsageRecord(
 
     /** Device manufacturer + model (e.g., "Samsung SM-A546E") */
     @ColumnInfo(name = "device_model")
-    val deviceModel: String = ""
+    val deviceModel: String = "",
+
+    /** Flag indicating if this record has been synced to the backend */
+    @ColumnInfo(name = "is_synced")
+    val isSynced: Boolean = false
+
 )

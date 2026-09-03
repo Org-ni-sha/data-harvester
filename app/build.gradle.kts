@@ -3,6 +3,14 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val gitBranch: String = try {
+    val process = Runtime.getRuntime().exec(arrayOf("git", "rev-parse", "--abbrev-ref", "HEAD"))
+    val result = process.inputStream.bufferedReader().readText().trim()
+    if (result.isEmpty()) "main" else result
+} catch (e: Exception) {
+    "main"
+}
+
 android {
     namespace = "com.capstone.dataharvester"
     compileSdk = 36
@@ -11,11 +19,18 @@ android {
         applicationId = "com.capstone.dataharvester"
         minSdk = 23
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 6
+        versionName = "1.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        buildConfigField("String", "GIT_BRANCH", "\"$gitBranch\"")
     }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
 
     buildTypes {
         release {
@@ -31,6 +46,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+base {
+    archivesName.set("DATAra-Harvester")
 }
 
 dependencies {
@@ -52,4 +71,10 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
+
+    // OkHttp Client
+    implementation(libs.okhttp)
 }
