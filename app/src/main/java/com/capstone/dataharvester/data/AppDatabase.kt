@@ -17,10 +17,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v1: Initial schema with usage_records table
  *  - v2: Added device_id, signal_strength, is_charging, device_model columns
  *         to usage_records + new app_usage_records table
+ *  - v3: Added query_start column to app_usage_records for network-switch snapshots
+ *  - v4: Added upload_history table for tracking cloud sync operations
+ *  - v5: APK versioning for app updates
+ *  - v6: Added start_time and end_time columns to app_usage_records for tracking network-switch snapshots
  */
 @Database(
     entities = [UsageRecord::class, AppUsageRecord::class],
-    version = 2,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -66,6 +70,47 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from v2 to v3:
+         * - Adds query_start column to app_usage_records
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_usage_records ADD COLUMN query_start TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * Migration from v3 to v4:
+         * - No local schema changes (upload_history is a remote cloud-only table)
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No local changes required
+            }
+        }
+
+        /**
+         * Migration from v4 to v5:
+         * - No local schema changes (APK versioning update)
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No local changes required
+            }
+        }
+
+        /**
+         * Migration from v5 to v6:
+         * - Adds start_time and end_time columns to app_usage_records
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_usage_records ADD COLUMN start_time TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE app_usage_records ADD COLUMN end_time TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.
          */
@@ -76,7 +121,14 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "data_harvester_db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6
+                    )
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

@@ -4,6 +4,9 @@
 
     <!-- ── Permissions ── -->
 
+    <!-- Allow app to connect to the cloud database -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Foreground service (all Android versions) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
@@ -25,6 +28,19 @@
 
     <!-- Signal strength reading on some Android versions -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- Request permission to install packages -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!--
+        Package visibility (Android 11+ / API 30+).
+        Without this, PackageManager.getPackagesForUid() returns null for
+        virtually all third-party apps due to scoped package visibility rules,
+        causing every app to be labelled "Unknown".
+        Safe for a research/capstone app not distributed via Play Store.
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <!-- ── Application ── -->
 
@@ -70,6 +86,16 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
