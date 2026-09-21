@@ -128,7 +128,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6
                     )
-                    .fallbackToDestructiveMigration()
+                    // No destructive fallback: unsynced rows are the dataset. A missing
+                    // migration must crash loudly rather than silently wipe the backlog.
                     .build()
                     .also { INSTANCE = it }
             }

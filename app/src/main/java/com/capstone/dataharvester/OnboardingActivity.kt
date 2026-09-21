@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
@@ -27,6 +28,10 @@ import com.capstone.dataharvester.util.NetworkStatsHelper
  *  2. READ_PHONE_STATE (runtime permission for signal strength)
  *  3. PACKAGE_USAGE_STATS (special — must be granted in Settings)
  *
+ * Also offered, but not required: battery optimisation exemption. It is the
+ * single biggest cause of silent collection loss, but some OEM builds do not
+ * expose the dialog, so it must not block a respondent from enrolling.
+ *
  * Once all granted, the "GET STARTED" button becomes active and navigates
  * to MainActivity. The completion state is saved so subsequent launches
  * skip this screen (unless a permission is revoked).
@@ -42,6 +47,7 @@ class OnboardingActivity : AppCompatActivity() {
     private lateinit var notifStatus: TextView
     private lateinit var phoneStatus: TextView
     private lateinit var usageStatus: TextView
+    private lateinit var batteryStatus: TextView
     private lateinit var getStartedButton: Button
     private lateinit var networkStatsHelper: NetworkStatsHelper
 
@@ -62,12 +68,14 @@ class OnboardingActivity : AppCompatActivity() {
         notifStatus = findViewById(R.id.notifStatus)
         phoneStatus = findViewById(R.id.phoneStatus)
         usageStatus = findViewById(R.id.usageStatus)
+        batteryStatus = findViewById(R.id.batteryStatus)
         getStartedButton = findViewById(R.id.getStartedButton)
 
         // Click handlers for each permission row
         notifStatus.setOnClickListener { requestNotificationPermission() }
         phoneStatus.setOnClickListener { requestPhoneStatePermission() }
         usageStatus.setOnClickListener { openUsageAccessSettings() }
+        batteryStatus.setOnClickListener { requestBatteryExemption() }
 
         // Get Started button
         getStartedButton.setOnClickListener {
@@ -113,6 +121,20 @@ class OnboardingActivity : AppCompatActivity() {
         return isNotificationPermissionGranted() &&
                 isPhoneStatePermissionGranted() &&
                 isUsageAccessGranted()
+    }
+
+    /**
+     * Whether the app is exempt from battery optimisation. Not part of
+     * [allPermissionsGranted] — see the class comment.
+     */
+    private fun isBatteryExemptionGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.isIgnoringBatteryOptimizations(packageName)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // ─── Permission Requests ──────────────────────────────────────────────
@@ -189,6 +211,37 @@ class OnboardingActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Ask to be exempt from battery optimisation.
+     *
+     * Tries the one-tap system dialog first. Some OEM builds refuse that intent,
+     * so fall back to the battery optimisation list where the user can find the
+     * app manually.
+     */
+    private fun requestBatteryExemption() {
+        if (isBatteryExemptionGranted()) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+
+        try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            )
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                Toast.makeText(
+                    this,
+                    "Find \"Data Harvester\" and set it to Not optimised",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e2: Exception) {
+                Toast.makeText(this, "Could not open battery settings", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // ─── UI Updates ───────────────────────────────────────────────────────
 
     private fun updatePermissionUI() {
@@ -226,6 +279,17 @@ class OnboardingActivity : AppCompatActivity() {
             usageStatus.text = grantAction
             usageStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
             usageStatus.isClickable = true
+        }
+
+        // Battery exemption — recommended, does not gate the button
+        if (isBatteryExemptionGranted()) {
+            batteryStatus.text = granted
+            batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.status_active))
+            batteryStatus.isClickable = false
+        } else {
+            batteryStatus.text = "ALLOW"
+            batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
+            batteryStatus.isClickable = true
         }
 
         // Get Started button — only enabled when all granted

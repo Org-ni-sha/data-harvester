@@ -35,9 +35,13 @@ interface AppUsageDao {
     @Query("DELETE FROM app_usage_records")
     suspend fun deleteAll()
 
-    /** Get per-app records that haven't been synced to the backend yet. */
-    @Query("SELECT * FROM app_usage_records WHERE is_synced = 0 LIMIT 100")
-    suspend fun getUnsyncedRecords(): List<AppUsageRecord>
+    /** Get the oldest unsynced per-app records, up to [limit]. */
+    @Query("SELECT * FROM app_usage_records WHERE is_synced = 0 ORDER BY id ASC LIMIT :limit")
+    suspend fun getUnsyncedRecords(limit: Int): List<AppUsageRecord>
+
+    /** Number of per-app records still waiting to be uploaded. */
+    @Query("SELECT COUNT(*) FROM app_usage_records WHERE is_synced = 0")
+    suspend fun getUnsyncedCount(): Int
 
     /** Mark per-app records as synced after successful backend upload. */
     @Query("UPDATE app_usage_records SET is_synced = 1 WHERE id IN (:ids)")

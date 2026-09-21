@@ -364,13 +364,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCloudSync() {
-        // Only sync when device is connected to the internet
+        // Unmetered only: uploading over mobile data would spend the respondent's
+        // prepaid load and be counted as usage by the TrafficStats collector.
         val syncConstraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiredNetworkType(NetworkType.UNMETERED)
             .build()
 
-        // Schedule to run daily (every 24 hours)
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(24, TimeUnit.HOURS)
+        // Every 2 hours, so a day of collection never sits undelivered on the device.
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(2, TimeUnit.HOURS)
             .setConstraints(syncConstraints)
             .build()
 
@@ -391,16 +392,17 @@ class MainActivity : AppCompatActivity() {
             val resultCount = withContext(Dispatchers.IO) {
                 syncManager.syncPendingData()
             }
-            
-            if (resultCount > 0) {
-                Toast.makeText(this@MainActivity, "Uploaded $resultCount records successfully!", Toast.LENGTH_SHORT).show()
-                updateStats() // Update the stats count on screen
-            } else if (resultCount == 0) {
-                Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this@MainActivity, "Upload failed! Check internet connection and logs.", Toast.LENGTH_LONG).show()
+
+            val message = when {
+                resultCount > 0 -> "Uploaded $resultCount records successfully!"
+                resultCount == 0 -> "No new unsynced records to upload."
+                resultCount == CloudSyncManager.RESULT_METERED ->
+                    "Connect to Wi-Fi to upload. Uploading over mobile data would use your load."
+                else -> "Upload failed! Check your Wi-Fi connection and try again."
             }
-            
+            Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+            if (resultCount > 0) updateStats()
+
             uploadButton.isEnabled = true
             uploadButton.text = "☁️ UPLOAD TO CLOUD"
         }
