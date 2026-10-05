@@ -3,6 +3,9 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
 val gitBranch: String = try {
     val process = Runtime.getRuntime().exec(arrayOf("git", "rev-parse", "--abbrev-ref", "HEAD"))
     val result = process.inputStream.bufferedReader().readText().trim()
@@ -25,6 +28,15 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         buildConfigField("String", "GIT_BRANCH", "\"$gitBranch\"")
+        
+        val envFile = project.rootProject.file(".env")
+        val envProperties = Properties()
+        if (envFile.exists()) {
+            envProperties.load(FileInputStream(envFile))
+        }
+        buildConfigField("String", "GATEWAY_URL", envProperties.getProperty("GATEWAY_URL") ?: "\"\"")
+        buildConfigField("String", "API_KEY", envProperties.getProperty("API_KEY") ?: "\"\"")
+        buildConfigField("String", "DB_NAME", envProperties.getProperty("DB_NAME") ?: "\"\"")
     }
 
     buildFeatures {

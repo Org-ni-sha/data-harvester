@@ -36,7 +36,7 @@ interface AppUsageDao {
     suspend fun deleteAll()
 
     /** Get per-app records that haven't been synced to the backend yet. */
-    @Query("SELECT * FROM app_usage_records WHERE is_synced = 0 LIMIT 100")
+    @Query("SELECT * FROM app_usage_records WHERE is_synced = 0")
     suspend fun getUnsyncedRecords(): List<AppUsageRecord>
 
     /** Mark per-app records as synced after successful backend upload. */

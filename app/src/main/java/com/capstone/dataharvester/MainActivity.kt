@@ -369,8 +369,8 @@ class MainActivity : AppCompatActivity() {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        // Schedule to run daily (every 24 hours)
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(24, TimeUnit.HOURS)
+        // Schedule to run every 4 hours. Automated upload
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(4, TimeUnit.HOURS)
             .setConstraints(syncConstraints)
             .build()
 
@@ -398,7 +398,7 @@ class MainActivity : AppCompatActivity() {
             } else if (resultCount == 0) {
                 Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this@MainActivity, "Upload failed! Check internet connection and logs.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MainActivity, "Upload failed! Please try again. Check internet connection and logs.", Toast.LENGTH_LONG).show()
             }
             
             uploadButton.isEnabled = true

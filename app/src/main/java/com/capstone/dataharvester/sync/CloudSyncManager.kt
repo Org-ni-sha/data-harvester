@@ -14,10 +14,10 @@ class CloudSyncManager(private val context: Context) {
     private val client = OkHttpClient()
     private val db = AppDatabase.getInstance(context)
 
-    // Your SQLite Cloud configurations
-    private val gatewayUrl = "https://caqj7nc1dk.g4.gateway.sqlite.cloud/v2/weblite/sql"
-    private val apiKey = "pyJnSCHaiLuFXxvad4y65KtyEX99ni1H0Ut6AcMDz10"
-    private val dbName = "DATAra_harvester.sqlite" 
+    // Your SQLite Cloud configurations loaded from .env via BuildConfig
+    private val gatewayUrl = com.capstone.dataharvester.BuildConfig.GATEWAY_URL
+    private val apiKey = com.capstone.dataharvester.BuildConfig.API_KEY
+    private val dbName = com.capstone.dataharvester.BuildConfig.DB_NAME 
 
     /**
      * Uploads local unsynced records to the cloud database.
