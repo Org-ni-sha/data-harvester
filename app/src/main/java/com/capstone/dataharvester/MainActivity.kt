@@ -147,8 +147,32 @@ class MainActivity : AppCompatActivity() {
         deviceIdText.text = "ID: $deviceId"
         deviceModelText.text = "Model: $deviceModel"
         
-        val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
-        val networkProvider = telephonyManager.networkOperatorName.takeIf { !it.isNullOrBlank() } ?: "Unknown / No SIM"
+        var networkProvider = "Unknown / No SIM"
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP_MR1) {
+            val subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as android.telephony.SubscriptionManager
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                try {
+                    val activeSubscriptionInfoList = subscriptionManager.activeSubscriptionInfoList
+                    if (!activeSubscriptionInfoList.isNullOrEmpty()) {
+                        val providers = activeSubscriptionInfoList.mapNotNull { it.carrierName?.toString() }.filter { it.isNotBlank() }
+                        if (providers.isNotEmpty()) {
+                            networkProvider = providers.joinToString(" & ")
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Failed to get active subscriptions", e)
+                }
+            }
+        }
+        
+        if (networkProvider == "Unknown / No SIM") {
+            val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            networkProvider = telephonyManager.simOperatorName.takeIf { !it.isNullOrBlank() }
+                ?: telephonyManager.networkOperatorName.takeIf { !it.isNullOrBlank() }
+                ?: "Unknown / No SIM"
+        }
+
         networkProviderText.text = "Provider: $networkProvider"
     }
 

@@ -21,8 +21,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import android.widget.Toast
-import com.capstone.dataharvester.BuildConfig
 
 class UpdateManager(private val context: Context) {
 
