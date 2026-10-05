@@ -69,17 +69,6 @@ data class AppUsageRecord(
     @ColumnInfo(name = "end_time")
     val endTime: String = "",
 
-    /** ISO 8601 datetime string for the start of the query window */
-    @ColumnInfo(name = "query_start")
-    val queryStart: String = "",
-
-    /** ISO 8601 datetime string for the start of the collection interval */
-    @ColumnInfo(name = "start_time")
-    val startTime: String = "",
-
-    /** ISO 8601 datetime string for the end of the collection interval */
-    @ColumnInfo(name = "end_time")
-    val endTime: String = "",
 
     /** 1 if system/pre-installed app, 0 if user-installed */
     @ColumnInfo(name = "is_system_app")

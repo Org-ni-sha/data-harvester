@@ -76,8 +76,8 @@ class CloudSyncManager(private val context: Context) {
             
             // Add app usage records
             unsyncedAppUsage.forEach { record ->
-                sqlBuilder.append("INSERT OR IGNORE INTO app_usage_records (timestamp, datetime_str, device_id, package_name, app_name, uid, bytes_rx, bytes_tx, bytes_total, network_type, query_start, start_time, end_time, is_system_app, utc_offset_minutes) ")
-                sqlBuilder.append("VALUES (${record.timestamp}, ${sqlStr(record.datetimeStr)}, ${sqlStr(record.deviceId)}, ${sqlStr(record.packageName)}, ${sqlStr(record.appName)}, ${record.uid}, ${record.bytesRx}, ${record.bytesTx}, ${record.bytesTotal}, ${sqlStr(record.networkType)}, ${sqlStr(record.queryStart)}, ${sqlStr(record.startTime)}, ${sqlStr(record.endTime)}, ${record.isSystemApp}, ${record.utcOffsetMinutes});\n")
+                sqlBuilder.append("INSERT OR IGNORE INTO app_usage_records (local_id, timestamp, datetime_str, device_id, package_name, app_name, uid, bytes_rx, bytes_tx, bytes_total, network_type, query_start, start_time, end_time, is_system_app, utc_offset_minutes) ")
+                sqlBuilder.append("VALUES (${record.id}, ${record.timestamp}, ${sqlStr(record.datetimeStr)}, ${sqlStr(record.deviceId)}, ${sqlStr(record.packageName)}, ${sqlStr(record.appName)}, ${record.uid}, ${record.bytesRx}, ${record.bytesTx}, ${record.bytesTotal}, ${sqlStr(record.networkType)}, ${sqlStr(record.queryStart)}, ${sqlStr(record.startTime)}, ${sqlStr(record.endTime)}, ${record.isSystemApp}, ${record.utcOffsetMinutes});\n")
             }
             
             var unsyncedIdentity = emptyList<com.capstone.dataharvester.data.DeviceIdentity>()
@@ -92,8 +92,9 @@ class CloudSyncManager(private val context: Context) {
                 }
                 unsyncedPromos = promoRecordDao.getAllUnsynced()
                 unsyncedPromos.forEach { record ->
-                    sqlBuilder.append("INSERT OR REPLACE INTO promo_records (id, device_id, promo_name, promo_price, promo_duration, promo_data_allowance, custom_data_allowance, has_unlimited_data, sms_allocation, call_allocation, provider, start_date, expiry_date, created_at, status) ")
-                    sqlBuilder.append("VALUES (${record.id}, ${sqlStr(record.device_id)}, ${sqlStr(record.promo_name)}, ${record.promo_price}, ${record.promo_duration}, ${record.promo_data_allowance}, ${record.custom_data_allowance}, ${record.has_unlimited_data}, ${sqlStr(record.sms_allocation)}, ${sqlStr(record.call_allocation)}, ${sqlStr(record.provider)}, ${sqlStr(record.start_date)}, ${sqlStr(record.expiry_date)}, ${record.created_at}, ${sqlStr(record.status)});\n")
+                    sqlBuilder.append("INSERT INTO promo_records (local_id, device_id, promo_name, promo_price, promo_duration, promo_data_allowance, custom_data_allowance, has_unlimited_data, sms_allocation, call_allocation, provider, start_date, expiry_date, created_at, status) ")
+                    sqlBuilder.append("VALUES (${record.id}, ${sqlStr(record.device_id)}, ${sqlStr(record.promo_name)}, ${record.promo_price}, ${record.promo_duration}, ${record.promo_data_allowance}, ${record.custom_data_allowance}, ${record.has_unlimited_data}, ${sqlStr(record.sms_allocation)}, ${sqlStr(record.call_allocation)}, ${sqlStr(record.provider)}, ${sqlStr(record.start_date)}, ${sqlStr(record.expiry_date)}, ${record.created_at}, ${sqlStr(record.status)}) ")
+                    sqlBuilder.append("ON CONFLICT(device_id, local_id) DO UPDATE SET promo_name = excluded.promo_name, promo_price = excluded.promo_price, promo_duration = excluded.promo_duration, promo_data_allowance = excluded.promo_data_allowance, custom_data_allowance = excluded.custom_data_allowance, has_unlimited_data = excluded.has_unlimited_data, sms_allocation = excluded.sms_allocation, call_allocation = excluded.call_allocation, provider = excluded.provider, start_date = excluded.start_date, expiry_date = excluded.expiry_date, created_at = excluded.created_at, status = excluded.status;\n")
                 }
             }
             
@@ -125,40 +126,41 @@ class CloudSyncManager(private val context: Context) {
                 .build()
                 
             try {
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-                    Log.i("SyncManager", "Batch synced $totalSynced records successfully!")
-                    
-                    db.withTransaction {
-                        if (unsyncedUsage.isNotEmpty()) {
-                            unsyncedUsage.map { it.id }.chunked(500).forEach { chunk ->
-                                usageDao.markAsSynced(chunk)
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        Log.i("SyncManager", "Batch synced $totalSynced records successfully!")
+                        
+                        db.withTransaction {
+                            if (unsyncedUsage.isNotEmpty()) {
+                                unsyncedUsage.map { it.id }.chunked(500).forEach { chunk ->
+                                    usageDao.markAsSynced(chunk)
+                                }
+                            }
+                            if (unsyncedAppUsage.isNotEmpty()) {
+                                unsyncedAppUsage.map { it.id }.chunked(500).forEach { chunk ->
+                                    appUsageDao.markAsSynced(chunk)
+                                }
+                            }
+                            if (isFirstBatch && unsyncedIdentity.isNotEmpty()) {
+                                unsyncedIdentity.map { it.id }.chunked(500).forEach { chunk ->
+                                    deviceIdentityDao.markAsSynced(chunk)
+                                }
+                            }
+                            if (isFirstBatch && unsyncedPromos.isNotEmpty()) {
+                                unsyncedPromos.map { it.id }.chunked(500).forEach { chunk ->
+                                    promoRecordDao.markAsSynced(chunk)
+                                }
                             }
                         }
-                        if (unsyncedAppUsage.isNotEmpty()) {
-                            unsyncedAppUsage.map { it.id }.chunked(500).forEach { chunk ->
-                                appUsageDao.markAsSynced(chunk)
-                            }
-                        }
-                        if (isFirstBatch && unsyncedIdentity.isNotEmpty()) {
-                            unsyncedIdentity.map { it.id }.chunked(500).forEach { chunk ->
-                                deviceIdentityDao.markAsSynced(chunk)
-                            }
-                        }
-                        if (isFirstBatch && unsyncedPromos.isNotEmpty()) {
-                            unsyncedPromos.map { it.id }.chunked(500).forEach { chunk ->
-                                promoRecordDao.markAsSynced(chunk)
-                            }
-                        }
+                        
+                        totalUsageSynced += unsyncedUsage.size
+                        totalAppUsageSynced += unsyncedAppUsage.size
+                        isFirstBatch = false
+                    } else {
+                        val errorBody = response.body?.string()
+                        Log.e("SyncManager", "Failed to sync: Code ${response.code} - $errorBody")
+                        return SyncResult.Failure("HTTP ${response.code}: $errorBody")
                     }
-                    
-                    totalUsageSynced += unsyncedUsage.size
-                    totalAppUsageSynced += unsyncedAppUsage.size
-                    isFirstBatch = false
-                } else {
-                    val errorBody = response.body?.string()
-                    Log.e("SyncManager", "Failed to sync: Code ${response.code} - $errorBody")
-                    return SyncResult.Failure("HTTP ${response.code}: $errorBody")
                 }
             } catch (e: Exception) {
                 Log.e("SyncManager", "Error during sync", e)
@@ -177,7 +179,7 @@ class CloudSyncManager(private val context: Context) {
         val deviceModel = deviceIdManager.getDeviceModel()
         
         // Sum up all records that match this exact device_model, regardless of their device_id or hardware_id
-        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_model = '$deviceModel') as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN (SELECT DISTINCT device_id FROM usage_records WHERE device_model = '$deviceModel')) as app_count;"
+        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_model = ${sqlStr(deviceModel)}) as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN (SELECT DISTINCT device_id FROM usage_records WHERE device_model = ${sqlStr(deviceModel)})) as app_count;"
         
         val jsonBody = org.json.JSONObject()
         jsonBody.put("database", dbName)

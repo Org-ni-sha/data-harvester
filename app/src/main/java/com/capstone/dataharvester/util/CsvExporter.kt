@@ -42,12 +42,12 @@ class CsvExporter(private val context: Context) {
             "id,timestamp,datetime,hour,minute,day_of_week,is_weekend," +
             "time_period,bytes_rx,bytes_tx,bytes_total,mb_used," +
             "cumulative_mb_today,network_type,screen_on,battery_level," +
-            "device_id,signal_strength,is_charging,device_model"
+            "device_id,signal_strength,is_charging,device_model,network_operator,utc_offset_minutes"
 
         // Per-app CSV Header
         private const val APP_CSV_HEADER =
             "id,timestamp,datetime,device_id,package_name,app_name," +
-            "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,start_time,end_time,is_system_app"
+            "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,start_time,end_time,is_system_app,utc_offset_minutes"
     }
 
     // ─── Public API ───────────────────────────────────────────────────────
@@ -291,7 +291,9 @@ class CsvExporter(private val context: Context) {
             quote(r.deviceId),
             r.signalStrength.toString(),
             r.isCharging.toString(),
-            quote(r.deviceModel)
+            quote(r.deviceModel),
+            quote(r.networkOperator),
+            r.utcOffsetMinutes.toString()
         ).joinToString(",")
     }
 
@@ -314,7 +316,8 @@ class CsvExporter(private val context: Context) {
             quote(r.queryStart),
             quote(r.startTime),
             quote(r.endTime),
-            r.isSystemApp.toString()
+            r.isSystemApp.toString(),
+            r.utcOffsetMinutes.toString()
         ).joinToString(",")
     }
 

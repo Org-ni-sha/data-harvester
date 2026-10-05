@@ -317,7 +317,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Note for Xiaomi, Oppo, Vivo, Realme users:\nPlease also enable 'Autostart' for this app in Settings."
+            android:text="@string/autostart_instruction"
             android:textSize="12sp"
             android:textColor="@color/text_hint"
             android:gravity="center"

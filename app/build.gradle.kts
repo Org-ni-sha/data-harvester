@@ -90,9 +90,8 @@ dependencies {
     // OkHttp Client
     implementation(libs.okhttp)
 
-    // WorkManager
-    implementation(libs.androidx.work.runtime.ktx)
+}
 
-    // OkHttp Client
-    implementation(libs.okhttp)
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
