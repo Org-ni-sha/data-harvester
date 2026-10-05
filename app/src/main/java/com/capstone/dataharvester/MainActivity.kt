@@ -42,7 +42,26 @@ import java.util.concurrent.TimeUnit
  * Dashboard activity — the main screen after onboarding.
  *
  * Features:
+import com.capstone.dataharvester.sync.CloudSyncManager
+import com.capstone.dataharvester.sync.SyncWorker
+import com.capstone.dataharvester.update.UpdateManager
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
+
+/**
+ * Dashboard activity — the main screen after onboarding.
+ *
+ * Features:
  *  - Device ID display (UUID + model)
+ *  - Live status indicator with colored dot
+ *  - Stats grid: record counts, today's usage, last record time
+ *  - Start / Stop collection (side by side)
+ *  - Export All CSV (both main + per-app, fixed filenames, overwrite)
+ *  - Reset Data (confirmation dialog, clears both tables)
  *  - Live status indicator with colored dot
  *  - Stats grid: record counts, today's usage, last record time
  *  - Start / Stop collection (side by side)
@@ -51,10 +70,13 @@ import java.util.concurrent.TimeUnit
  *
  * Auto-refreshes stats every 10 seconds.
  * All permission handling is done in OnboardingActivity.
+ * Auto-refreshes stats every 10 seconds.
+ * All permission handling is done in OnboardingActivity.
  */
 class MainActivity : AppCompatActivity() {
 
     // Views
+    private lateinit var statusDot: View
     private lateinit var statusDot: View
     private lateinit var statusText: TextView
     private lateinit var recordCountText: TextView
@@ -66,6 +88,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var networkProviderText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var uploadButton: Button
+    private lateinit var exportAllButton: Button
+    private lateinit var resetButton: Button
     private lateinit var uploadButton: Button
     private lateinit var exportAllButton: Button
     private lateinit var resetButton: Button
@@ -85,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         deviceIdManager = DeviceIdManager(this)
 
         // Bind views
+        statusDot = findViewById(R.id.statusDot)
         statusDot = findViewById(R.id.statusDot)
         statusText = findViewById(R.id.statusText)
         recordCountText = findViewById(R.id.recordCountText)
@@ -138,13 +164,25 @@ class MainActivity : AppCompatActivity() {
         uploadButton.setOnClickListener { syncToCloud() }
         exportAllButton.setOnClickListener { exportAllCsv() }
         resetButton.setOnClickListener { confirmReset() }
+        uploadButton.setOnClickListener { syncToCloud() }
+        exportAllButton.setOnClickListener { exportAllCsv() }
+        resetButton.setOnClickListener { confirmReset() }
 
+        // Restore collection state
         // Restore collection state
         restoreCollectionState()
 
         // Initial UI update + start auto-refresh
         updateStats()
         startAutoRefresh()
+
+        // Schedule cloud synchronization
+        setupCloudSync()
+
+        // Check for remote app updates and show success notification if just updated
+        val updateManager = UpdateManager(this)
+        updateManager.checkAndNotifyIfUpdated()
+        updateManager.checkForUpdates()
 
         // Schedule cloud synchronization
         setupCloudSync()
@@ -193,6 +231,7 @@ class MainActivity : AppCompatActivity() {
 
         updateStatusUI(isCollecting = true)
         Toast.makeText(this, "Collection started", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Collection started", Toast.LENGTH_SHORT).show()
     }
 
     private fun stopCollection() {
@@ -200,10 +239,15 @@ class MainActivity : AppCompatActivity() {
 
         updateStatusUI(isCollecting = false)
         Toast.makeText(this, "Collection stopped", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Collection stopped", Toast.LENGTH_SHORT).show()
     }
 
     // ─── Export All CSV ────────────────────────────────────────────────────
+    // ─── Export All CSV ────────────────────────────────────────────────────
 
+    private fun exportAllCsv() {
+        exportAllButton.isEnabled = false
+        exportAllButton.text = "Exporting..."
     private fun exportAllCsv() {
         exportAllButton.isEnabled = false
         exportAllButton.text = "Exporting..."
@@ -213,7 +257,10 @@ class MainActivity : AppCompatActivity() {
                 val exporter = CsvExporter(this@MainActivity)
                 val mainCount = withContext(Dispatchers.IO) { exporter.getExportableCount() }
                 val appCount = withContext(Dispatchers.IO) { exporter.getAppExportableCount() }
+                val mainCount = withContext(Dispatchers.IO) { exporter.getExportableCount() }
+                val appCount = withContext(Dispatchers.IO) { exporter.getAppExportableCount() }
 
+                if (mainCount == 0 && appCount == 0) {
                 if (mainCount == 0 && appCount == 0) {
                     Toast.makeText(
                         this@MainActivity,
@@ -226,9 +273,13 @@ class MainActivity : AppCompatActivity() {
                 val (exportedMain, exportedApp) = withContext(Dispatchers.IO) {
                     exporter.exportAll()
                 }
+                val (exportedMain, exportedApp) = withContext(Dispatchers.IO) {
+                    exporter.exportAll()
+                }
 
                 Toast.makeText(
                     this@MainActivity,
+                    "Exported $exportedMain records + $exportedApp app records to Downloads/",
                     "Exported $exportedMain records + $exportedApp app records to Downloads/",
                     Toast.LENGTH_LONG
                 ).show()
@@ -237,15 +288,41 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(
                     this@MainActivity,
                     "Export failed: ${e.message}",
+                    "Export failed: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
             } finally {
+                exportAllButton.isEnabled = true
+                exportAllButton.text = "📤  EXPORT ALL CSV"
                 exportAllButton.isEnabled = true
                 exportAllButton.text = "📤  EXPORT ALL CSV"
             }
         }
     }
 
+    // ─── Reset Data ────────────────────────────────────────────────────────
+
+    private fun confirmReset() {
+        mainScope.launch {
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
+            val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("⚠️ Reset All Data?")
+                .setMessage(
+                    "This will permanently delete all collected records:\n\n" +
+                    "• $mainCount usage records\n" +
+                    "• $appCount per-app records\n\n" +
+                    "This action cannot be undone."
+                )
+                .setPositiveButton("RESET") { _, _ -> performReset() }
+                .setNegativeButton("CANCEL", null)
+                .show()
+        }
+    }
+
+    private fun performReset() {
     // ─── Reset Data ────────────────────────────────────────────────────────
 
     private fun confirmReset() {
@@ -306,11 +383,14 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity,
                     "All data has been reset",
                     Toast.LENGTH_SHORT
+                    "All data has been reset",
+                    Toast.LENGTH_SHORT
                 ).show()
 
             } catch (e: Exception) {
                 Toast.makeText(
                     this@MainActivity,
+                    "Reset failed: ${e.message}",
                     "Reset failed: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
@@ -348,10 +428,16 @@ class MainActivity : AppCompatActivity() {
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {
                     last.datetimeStr.substringAfter("T").substringBefore(".")
+                    last.datetimeStr.substringAfter("T").substringBefore(".")
                 } else {
+                    "—"
                     "—"
                 }
             } catch (e: Exception) {
+                recordCountText.text = "—"
+                appRecordCountText.text = "—"
+                todayUsageText.text = "— MB"
+                lastRecordText.text = "Error"
                 recordCountText.text = "—"
                 appRecordCountText.text = "—"
                 todayUsageText.text = "— MB"
@@ -365,19 +451,41 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Collecting"
             statusText.setTextColor(ContextCompat.getColor(this, R.color.status_active))
             applyDotColor(R.color.status_active)
+            statusText.text = "Collecting"
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.status_active))
+            applyDotColor(R.color.status_active)
             startButton.isEnabled = false
             startButton.alpha = 0.4f
+            startButton.alpha = 0.4f
             stopButton.isEnabled = true
+            stopButton.alpha = 1.0f
             stopButton.alpha = 1.0f
         } else {
             statusText.text = "Stopped"
             statusText.setTextColor(ContextCompat.getColor(this, R.color.status_stopped))
             applyDotColor(R.color.status_stopped)
+            statusText.text = "Stopped"
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.status_stopped))
+            applyDotColor(R.color.status_stopped)
             startButton.isEnabled = true
+            startButton.alpha = 1.0f
             startButton.alpha = 1.0f
             stopButton.isEnabled = false
             stopButton.alpha = 0.4f
+            stopButton.alpha = 0.4f
         }
+    }
+
+    private fun applyCircleDot() {
+        val dot = GradientDrawable()
+        dot.shape = GradientDrawable.OVAL
+        dot.setColor(ContextCompat.getColor(this, R.color.status_stopped))
+        statusDot.background = dot
+    }
+
+    private fun applyDotColor(colorRes: Int) {
+        val dot = statusDot.background as? GradientDrawable
+        dot?.setColor(ContextCompat.getColor(this, colorRes))
     }
 
     private fun applyCircleDot() {

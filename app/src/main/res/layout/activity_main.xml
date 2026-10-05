@@ -4,6 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/dark_bg"
+    android:background="@color/dark_bg"
     android:fillViewport="true">
 
     <LinearLayout
@@ -11,8 +12,23 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="20dp"
+        android:padding="20dp"
         android:gravity="center_horizontal">
 
+        <!-- ── Header ── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="20dp">
+
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/datara_logo"
+                android:contentDescription="DATAra Logo" />
         <!-- ── Header ── -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -39,13 +55,28 @@
                 android:layout_marginStart="12dp" />
 
         </LinearLayout>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="DATA HARVESTER"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:letterSpacing="0.08"
+                android:layout_marginStart="12dp" />
 
+        </LinearLayout>
+
+        <!-- ── Device Info Card ── -->
         <!-- ── Device Info Card ── -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
+            android:layout_marginBottom="12dp"
             app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/dark_surface">
             app:cardElevation="0dp"
             app:cardBackgroundColor="@color/dark_surface">
 
@@ -60,7 +91,11 @@
                     android:layout_height="wrap_content"
                     android:text="DEVICE"
                     android:textSize="11sp"
+                    android:text="DEVICE"
+                    android:textSize="11sp"
                     android:textStyle="bold"
+                    android:textColor="@color/text_hint"
+                    android:letterSpacing="0.1"
                     android:textColor="@color/text_hint"
                     android:letterSpacing="0.1"
                     android:layout_marginBottom="8dp" />
@@ -71,6 +106,7 @@
                     android:layout_height="wrap_content"
                     android:text="ID: —"
                     android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
                     android:textColor="@color/text_secondary"
                     android:fontFamily="monospace"
                     android:layout_marginBottom="4dp" />
@@ -96,11 +132,15 @@
         </androidx.cardview.widget.CardView>
 
         <!-- ── Status + Stats Card ── -->
+        <!-- ── Status + Stats Card ── -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
+            android:layout_marginBottom="12dp"
             app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/dark_surface">
             app:cardElevation="0dp"
             app:cardBackgroundColor="@color/dark_surface">
 
@@ -108,6 +148,21 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
+                android:padding="16dp">
+
+                <!-- Status row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="16dp">
+
+                    <View
+                        android:id="@+id/statusDot"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:background="@color/status_stopped" />
                 android:padding="16dp">
 
                 <!-- Status row -->
@@ -135,13 +190,70 @@
                         android:layout_marginStart="10dp" />
 
                 </LinearLayout>
+                    <TextView
+                        android:id="@+id/statusText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Stopped"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/status_stopped"
+                        android:layout_marginStart="10dp" />
+
+                </LinearLayout>
 
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:background="@color/dark_surface_alt"
+                    android:background="@color/dark_surface_alt"
                     android:layout_marginBottom="16dp" />
 
+                <!-- Stats Grid: 2 columns -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="RECORDS"
+                            android:textSize="10sp"
+                            android:textColor="@color/text_hint"
+                            android:letterSpacing="0.08" />
+
+                        <TextView
+                            android:id="@+id/recordCountText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_primary" />
+
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="APP RECORDS"
+                            android:textSize="10sp"
+                            android:textColor="@color/text_hint"
+                            android:letterSpacing="0.08" />
                 <!-- Stats Grid: 2 columns -->
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -203,7 +315,37 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
+                        <TextView
+                            android:id="@+id/appRecordCountText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_primary" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="TODAY"
+                            android:textSize="10sp"
+                            android:textColor="@color/text_hint"
+                            android:letterSpacing="0.08" />
                     android:orientation="horizontal">
 
                     <LinearLayout
@@ -244,7 +386,43 @@
                             android:textSize="10sp"
                             android:textColor="@color/text_hint"
                             android:letterSpacing="0.08" />
+                        <TextView
+                            android:id="@+id/todayUsageText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0 MB"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_primary" />
 
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="LAST RECORD"
+                            android:textSize="10sp"
+                            android:textColor="@color/text_hint"
+                            android:letterSpacing="0.08" />
+
+                        <TextView
+                            android:id="@+id/lastRecordText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="14sp"
+                            android:textColor="@color/text_secondary"
+                            android:layout_marginTop="4dp" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
                         <TextView
                             android:id="@+id/lastRecordText"
                             android:layout_width="wrap_content"
@@ -263,11 +441,26 @@
 
         <!-- ── Start / Stop Buttons (side by side) ── -->
         <LinearLayout
+        <!-- ── Start / Stop Buttons (side by side) ── -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:layout_marginBottom="12dp">
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
 
+            <Button
+                android:id="@+id/startButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:text="▶  START"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/dark_bg"
+                android:backgroundTint="@color/status_active"
+                android:layout_marginEnd="6dp" />
             <Button
                 android:id="@+id/startButton"
                 android:layout_width="0dp"
@@ -291,49 +484,86 @@
                 android:textColor="@color/white"
                 android:backgroundTint="@color/danger_red"
                 android:layout_marginStart="6dp" />
+            <Button
+                android:id="@+id/stopButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1"
+                android:text="⏹  STOP"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/white"
+                android:backgroundTint="@color/danger_red"
+                android:layout_marginStart="6dp" />
 
+        </LinearLayout>
         </LinearLayout>
 
         <!-- ── Upload to Cloud ── -->
+        <!-- ── Upload to Cloud ── -->
         <Button
             android:id="@+id/uploadButton"
+            android:id="@+id/uploadButton"
             android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="☁️ UPLOAD TO CLOUD"
+            android:textSize="14sp"
             android:layout_height="52dp"
             android:text="☁️ UPLOAD TO CLOUD"
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="@color/white"
             android:backgroundTint="@color/accent_blue"
+            android:textColor="@color/white"
+            android:backgroundTint="@color/accent_blue"
             android:layout_marginBottom="12dp" />
 
         <!-- ── Export All CSV ── -->
+        <!-- ── Export All CSV ── -->
         <Button
             android:id="@+id/exportAllButton"
+            android:id="@+id/exportAllButton"
             android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="📤  EXPORT ALL CSV"
+            android:textSize="14sp"
             android:layout_height="52dp"
             android:text="📤  EXPORT ALL CSV"
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="@color/white"
             android:backgroundTint="@color/accent_blue"
+            android:textColor="@color/white"
+            android:backgroundTint="@color/accent_blue"
             android:layout_marginBottom="12dp" />
 
         <!-- ── Reset Data ── -->
+        <!-- ── Reset Data ── -->
         <Button
             android:id="@+id/resetButton"
+            android:id="@+id/resetButton"
             android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="🗑  RESET DATA"
+            android:textSize="14sp"
             android:layout_height="52dp"
             android:text="🗑  RESET DATA"
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="@color/danger_red"
             android:backgroundTint="@color/dark_surface"
+            android:textColor="@color/danger_red"
+            android:backgroundTint="@color/dark_surface"
             android:layout_marginBottom="16dp" />
 
+        <!-- ── Footer ── -->
         <!-- ── Footer ── -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:text="TrafficStats: 30s  ·  Per-app: 10min  ·  Top 20 apps"
+            android:textSize="11sp"
+            android:textColor="@color/text_hint"
             android:text="TrafficStats: 30s  ·  Per-app: 10min  ·  Top 20 apps"
             android:textSize="11sp"
             android:textColor="@color/text_hint"

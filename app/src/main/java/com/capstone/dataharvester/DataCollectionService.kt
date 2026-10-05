@@ -40,7 +40,7 @@ import java.util.Locale
  *    Uses TrafficStats for device-wide data usage + sensor readings
  *    (battery, screen, network type, signal strength, charging state)
  *
- * 2. **Per-app collection** (every 10 minutes + on network switch):
+ * 2. **Per-app collection** (every 10 minutes + on network switch + on network switch):
  *    Uses NetworkStatsManager for per-app (per-UID) data usage breakdown.
  *    Requires PACKAGE_USAGE_STATS permission granted via Settings.
  *    Also triggers immediately on WiFi ↔ Mobile switches so each snapshot
@@ -212,8 +212,15 @@ class DataCollectionService : Service() {
 
                 val previousType = currentNetworkType
                 if (previousType != null && previousType != newType && previousType != "NONE") {
-                    // Removed debounce and immediate trigger to respect 10 min interval
-                    Log.i(TAG, "Network switch: $previousType → $newType")
+                    currentNetworkType = newType
+
+                    // Debounce: don't trigger if we just triggered recently
+                    val now = System.currentTimeMillis()
+                    if (now - lastNetworkSwitchCollectionTime > MIN_SWITCH_INTERVAL_MS) {
+                        lastNetworkSwitchCollectionTime = now
+                        Log.i(TAG, "Network switch: $previousType → $newType — triggering per-app snapshot")
+                        collectAppData()
+                    }
                 } else {
                     currentNetworkType = newType
                 }
@@ -224,7 +231,12 @@ class DataCollectionService : Service() {
                 currentNetworkType = "NONE"
 
                 if (previousType != null && previousType != "NONE") {
-                    Log.i(TAG, "Network lost ($previousType)")
+                    val now = System.currentTimeMillis()
+                    if (now - lastNetworkSwitchCollectionTime > MIN_SWITCH_INTERVAL_MS) {
+                        lastNetworkSwitchCollectionTime = now
+                        Log.i(TAG, "Network lost ($previousType) — triggering per-app snapshot")
+                        collectAppData()
+                    }
                 }
             }
         }

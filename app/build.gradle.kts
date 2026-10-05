@@ -64,10 +64,6 @@ base {
     archivesName.set("DATAra-Harvester")
 }
 
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
-}
-
 dependencies {
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
@@ -87,6 +83,12 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
+
+    // OkHttp Client
+    implementation(libs.okhttp)
 
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
