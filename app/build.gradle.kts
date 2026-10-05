@@ -22,8 +22,8 @@ android {
         applicationId = "com.capstone.dataharvester"
         minSdk = 23
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.5.0"
+        versionCode = 8
+        versionName = "1.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -62,6 +62,10 @@ android {
 
 base {
     archivesName.set("DATAra-Harvester")
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

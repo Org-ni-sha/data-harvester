@@ -27,7 +27,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class, PromoRecord::class],
     version = 8,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -184,7 +184,6 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8
                     )
-                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }
