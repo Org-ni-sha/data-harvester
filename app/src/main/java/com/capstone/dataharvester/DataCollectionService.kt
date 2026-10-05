@@ -212,15 +212,8 @@ class DataCollectionService : Service() {
 
                 val previousType = currentNetworkType
                 if (previousType != null && previousType != newType && previousType != "NONE") {
-                    currentNetworkType = newType
-
-                    // Debounce: don't trigger if we just triggered recently
-                    val now = System.currentTimeMillis()
-                    if (now - lastNetworkSwitchCollectionTime > MIN_SWITCH_INTERVAL_MS) {
-                        lastNetworkSwitchCollectionTime = now
-                        Log.i(TAG, "Network switch: $previousType → $newType — triggering per-app snapshot")
-                        collectAppData()
-                    }
+                    // Removed debounce and immediate trigger to respect 10 min interval
+                    Log.i(TAG, "Network switch: $previousType → $newType")
                 } else {
                     currentNetworkType = newType
                 }
@@ -231,12 +224,7 @@ class DataCollectionService : Service() {
                 currentNetworkType = "NONE"
 
                 if (previousType != null && previousType != "NONE") {
-                    val now = System.currentTimeMillis()
-                    if (now - lastNetworkSwitchCollectionTime > MIN_SWITCH_INTERVAL_MS) {
-                        lastNetworkSwitchCollectionTime = now
-                        Log.i(TAG, "Network lost ($previousType) — triggering per-app snapshot")
-                        collectAppData()
-                    }
+                    Log.i(TAG, "Network lost ($previousType)")
                 }
             }
         }
