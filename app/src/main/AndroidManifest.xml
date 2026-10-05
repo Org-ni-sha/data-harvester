@@ -18,6 +18,9 @@
 
     <!-- Restart collection service after device reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    
+    <!-- Exemption from battery optimizations to keep service alive -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Show foreground service notification (Android 13+ / API 33) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -26,8 +29,9 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Signal strength reading on some Android versions -->
+    <!-- Signal strength and network provider reading on some Android versions -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_BASIC_PHONE_STATE" />
 
     <!-- Request permission to install packages -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -41,6 +45,8 @@
     -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+
+
 
     <!-- ── Application ── -->
 

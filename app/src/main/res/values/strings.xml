@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Data Harvester</string>
+    <string name="autostart_instruction">On Xiaomi, Oppo, Vivo, or Realme phones, also turn on Autostart for this app in your phone\'s settings.</string>
 </resources>

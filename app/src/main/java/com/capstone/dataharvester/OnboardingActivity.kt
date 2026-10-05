@@ -26,6 +26,7 @@ import com.capstone.dataharvester.util.NetworkStatsHelper
  *  1. POST_NOTIFICATIONS (Android 13+ runtime permission)
  *  2. READ_PHONE_STATE (runtime permission for signal strength)
  *  3. PACKAGE_USAGE_STATS (special — must be granted in Settings)
+ *  4. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (special — must be granted in Settings)
  *
  * Once all granted, the "GET STARTED" button becomes active and navigates
  * to MainActivity. The completion state is saved so subsequent launches
@@ -42,6 +43,7 @@ class OnboardingActivity : AppCompatActivity() {
     private lateinit var notifStatus: TextView
     private lateinit var phoneStatus: TextView
     private lateinit var usageStatus: TextView
+    private lateinit var batteryStatus: TextView
     private lateinit var getStartedButton: Button
     private lateinit var networkStatsHelper: NetworkStatsHelper
 
@@ -62,12 +64,14 @@ class OnboardingActivity : AppCompatActivity() {
         notifStatus = findViewById(R.id.notifStatus)
         phoneStatus = findViewById(R.id.phoneStatus)
         usageStatus = findViewById(R.id.usageStatus)
+        batteryStatus = findViewById(R.id.batteryStatus)
         getStartedButton = findViewById(R.id.getStartedButton)
 
         // Click handlers for each permission row
         notifStatus.setOnClickListener { requestNotificationPermission() }
         phoneStatus.setOnClickListener { requestPhoneStatePermission() }
         usageStatus.setOnClickListener { openUsageAccessSettings() }
+        batteryStatus.setOnClickListener { requestBatteryOptimization() }
 
         // Get Started button
         getStartedButton.setOnClickListener {
@@ -109,10 +113,16 @@ class OnboardingActivity : AppCompatActivity() {
         return networkStatsHelper.hasUsageAccessPermission()
     }
 
+    private fun isBatteryOptimizationIgnored(): Boolean {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
     private fun allPermissionsGranted(): Boolean {
         return isNotificationPermissionGranted() &&
                 isPhoneStatePermissionGranted() &&
-                isUsageAccessGranted()
+                isUsageAccessGranted() &&
+                isBatteryOptimizationIgnored()
     }
 
     // ─── Permission Requests ──────────────────────────────────────────────
@@ -189,6 +199,22 @@ class OnboardingActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestBatteryOptimization() {
+        if (isBatteryOptimizationIgnored()) return
+
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (ex: Exception) {
+                Toast.makeText(this, "Could not open Battery Settings", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // ─── UI Updates ───────────────────────────────────────────────────────
 
     private fun updatePermissionUI() {
@@ -226,6 +252,17 @@ class OnboardingActivity : AppCompatActivity() {
             usageStatus.text = grantAction
             usageStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
             usageStatus.isClickable = true
+        }
+
+        // Battery Optimization
+        if (isBatteryOptimizationIgnored()) {
+            batteryStatus.text = granted
+            batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.status_active))
+            batteryStatus.isClickable = false
+        } else {
+            batteryStatus.text = grantAction
+            batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
+            batteryStatus.isClickable = true
         }
 
         // Get Started button — only enabled when all granted

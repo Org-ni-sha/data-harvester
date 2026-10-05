@@ -40,7 +40,7 @@ import java.util.Locale
  *    Uses TrafficStats for device-wide data usage + sensor readings
  *    (battery, screen, network type, signal strength, charging state)
  *
- * 2. **Per-app collection** (every 10 minutes + on network switch):
+ * 2. **Per-app collection** (every 10 minutes + on network switch + on network switch):
  *    Uses NetworkStatsManager for per-app (per-UID) data usage breakdown.
  *    Requires PACKAGE_USAGE_STATS permission granted via Settings.
  *    Also triggers immediately on WiFi ↔ Mobile switches so each snapshot
@@ -308,7 +308,8 @@ class DataCollectionService : Service() {
                 val timestamp = now.timeInMillis
                 val datetimeStr = isoFormat.format(now.time)
                 val dateStr = dateOnlyFormat.format(now.time)
-
+                val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(timestamp) / 60000
+                val networkOperator = deviceHelper.getNetworkProvider()
                 val hour = now.get(Calendar.HOUR_OF_DAY)
                 val minute = now.get(Calendar.MINUTE)
 
@@ -350,7 +351,9 @@ class DataCollectionService : Service() {
                     deviceId = deviceId,
                     signalStrength = signalStrength,
                     isCharging = if (charging) 1 else 0,
-                    deviceModel = deviceModel
+                    deviceModel = deviceModel,
+                    networkOperator = networkOperator,
+                    utcOffsetMinutes = utcOffsetMinutes
                 )
 
                 dao.insert(record)
@@ -421,8 +424,9 @@ class DataCollectionService : Service() {
 
                 // Build records with query_start for the collection window
                 val datetimeStr = isoFormat.format(now)
-                val queryStartStr = isoFormat.format(Date(lastCollectionTime))
+                val queryStartStr = isoFormat.format(java.util.Date(lastCollectionTime))
                 val deviceId = deviceIdManager.getDeviceId()
+                val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(now) / 60000
 
                 val records = snapshots.map { snapshot ->
                     AppUsageRecord(
@@ -439,7 +443,8 @@ class DataCollectionService : Service() {
                         queryStart = queryStartStr,
                         startTime = queryStartStr,
                         endTime = datetimeStr,
-                        isSystemApp = if (snapshot.isSystemApp) 1 else 0
+                        isSystemApp = if (snapshot.isSystemApp) 1 else 0,
+                        utcOffsetMinutes = utcOffsetMinutes
                     )
                 }
 

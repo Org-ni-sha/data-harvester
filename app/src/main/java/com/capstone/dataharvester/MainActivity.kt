@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
+import com.capstone.dataharvester.util.DeviceInfoHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lastRecordText: TextView
     private lateinit var deviceIdText: TextView
     private lateinit var deviceModelText: TextView
+    private lateinit var networkProviderText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var uploadButton: Button
@@ -91,6 +93,7 @@ class MainActivity : AppCompatActivity() {
         lastRecordText = findViewById(R.id.lastRecordText)
         deviceIdText = findViewById(R.id.deviceIdText)
         deviceModelText = findViewById(R.id.deviceModelText)
+        networkProviderText = findViewById(R.id.networkProviderText)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)  
         uploadButton = findViewById(R.id.uploadButton)
@@ -100,8 +103,34 @@ class MainActivity : AppCompatActivity() {
         // Make the status dot circular
         applyCircleDot()
 
-        // Display device identity
-        displayDeviceInfo()
+        // Display device identity and get network provider
+        val currentNetworkProvider = displayDeviceInfo()
+        
+        // Register device identity in database
+        mainScope.launch {
+            val hardwareId = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            val currentDeviceId = deviceIdManager.getDeviceId()
+            val deviceModel = deviceIdManager.getDeviceModel()
+            
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val dao = db.deviceIdentityDao()
+            
+            val existing = withContext(Dispatchers.IO) { dao.getLatestByHardwareId(hardwareId) }
+            if (existing == null || existing.current_device_id != currentDeviceId || existing.network_provider != currentNetworkProvider) {
+                withContext(Dispatchers.IO) {
+                    dao.insert(
+                        com.capstone.dataharvester.data.DeviceIdentity(
+                            current_device_id = currentDeviceId,
+                            previous_device_id = existing?.current_device_id,
+                            hardware_id = hardwareId ?: "unknown",
+                            device_model = deviceModel,
+                            network_provider = currentNetworkProvider,
+                            linked_at = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
 
         // Button click listeners
         startButton.setOnClickListener { startCollection() }
@@ -138,12 +167,18 @@ class MainActivity : AppCompatActivity() {
 
     // ─── Device Info Display ──────────────────────────────────────────────
 
-    private fun displayDeviceInfo() {
+    private fun displayDeviceInfo(): String {
         val deviceId = deviceIdManager.getDeviceId()
         val deviceModel = deviceIdManager.getDeviceModel()
 
         deviceIdText.text = "ID: $deviceId"
         deviceModelText.text = "Model: $deviceModel"
+        
+        val deviceHelper = DeviceInfoHelper(this)
+        val networkProvider = deviceHelper.getNetworkProvider()
+
+        networkProviderText.text = "Provider: $networkProvider"
+        return networkProvider
     }
 
     // ─── Collection Control ────────────────────────────────────────────────
@@ -259,6 +294,10 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit()
                     .putBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
                     .apply()
+                    
+                // Reset historical count
+                val histPrefs = getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
+                histPrefs.edit().clear().apply()
 
                 // Refresh UI
                 updateStats()
@@ -294,9 +333,18 @@ class MainActivity : AppCompatActivity() {
 
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
+                
+                val prefs = getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
+                val historicUsage = prefs.getInt("historic_usage_count", 0)
+                val historicAppUsage = prefs.getInt("historic_app_usage_count", 0)
 
-                recordCountText.text = "%,d".format(count)
-                appRecordCountText.text = "%,d".format(appCount)
+                // If historic is bigger than local, use historic. Else just use local
+                val displayUsage = maxOf(count, historicUsage)
+                val displayAppUsage = maxOf(appCount, historicAppUsage)
+
+                recordCountText.text = "%,d".format(displayUsage)
+                appRecordCountText.text = "%,d".format(displayAppUsage)
+                
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {
                     last.datetimeStr.substringAfter("T").substringBefore(".")
@@ -364,17 +412,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCloudSync() {
-        // Only sync when device is connected to the internet
+        // Only sync when device is connected to any network (WiFi or Mobile Data)
         val syncConstraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        // Schedule to run daily (every 24 hours)
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(24, TimeUnit.HOURS)
+        // Schedule to run every 1 hour. Automated upload
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
             .setConstraints(syncConstraints)
+            .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
             .build()
 
-        // Queue the work. UPDATE ensures that the new daily interval is applied if already scheduled.
+        // Queue the work. UPDATE ensures that the new interval is applied if already scheduled.
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "CloudSQLiteSync",
             ExistingPeriodicWorkPolicy.UPDATE,
@@ -383,22 +432,37 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun syncToCloud() {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        
+        if (capabilities == null || !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+            Toast.makeText(this@MainActivity, "Please connect to the internet to upload.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         uploadButton.isEnabled = false
         uploadButton.text = "Uploading..."
         
         mainScope.launch {
             val syncManager = CloudSyncManager(this@MainActivity)
-            val resultCount = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 syncManager.syncPendingData()
             }
             
-            if (resultCount > 0) {
-                Toast.makeText(this@MainActivity, "Uploaded $resultCount records successfully!", Toast.LENGTH_SHORT).show()
-                updateStats() // Update the stats count on screen
-            } else if (resultCount == 0) {
-                Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this@MainActivity, "Upload failed! Check internet connection and logs.", Toast.LENGTH_LONG).show()
+            when (result) {
+                is com.capstone.dataharvester.sync.SyncResult.Success -> {
+                    val totalSynced = result.usage + result.app
+                    if (totalSynced > 0) {
+                        Toast.makeText(this@MainActivity, "Uploaded %,d (%,d usage, %,d app usage) records successfully!".format(totalSynced, result.usage, result.app), Toast.LENGTH_SHORT).show()
+                        updateStats() // Update the stats count on screen
+                    } else {
+                        Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is com.capstone.dataharvester.sync.SyncResult.Failure -> {
+                    Toast.makeText(this@MainActivity, "Upload failed! ${result.reason}. Please try again. Check internet connection and logs.", Toast.LENGTH_LONG).show()
+                }
             }
             
             uploadButton.isEnabled = true
