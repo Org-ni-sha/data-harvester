@@ -62,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lastRecordText: TextView
     private lateinit var deviceIdText: TextView
     private lateinit var deviceModelText: TextView
+    private lateinit var networkProviderText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var uploadButton: Button
@@ -91,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         lastRecordText = findViewById(R.id.lastRecordText)
         deviceIdText = findViewById(R.id.deviceIdText)
         deviceModelText = findViewById(R.id.deviceModelText)
+        networkProviderText = findViewById(R.id.networkProviderText)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)  
         uploadButton = findViewById(R.id.uploadButton)
@@ -144,6 +146,10 @@ class MainActivity : AppCompatActivity() {
 
         deviceIdText.text = "ID: $deviceId"
         deviceModelText.text = "Model: $deviceModel"
+        
+        val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+        val networkProvider = telephonyManager.networkOperatorName.takeIf { !it.isNullOrBlank() } ?: "Unknown / No SIM"
+        networkProviderText.text = "Provider: $networkProvider"
     }
 
     // ─── Collection Control ────────────────────────────────────────────────
