@@ -412,9 +412,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCloudSync() {
-        // Only sync when device is connected to unmetered network (WiFi)
+        // Only sync when device is connected to any network (WiFi or Mobile Data)
         val syncConstraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.UNMETERED)
+            .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
         // Schedule to run every 1 hour. Automated upload
@@ -436,8 +436,8 @@ class MainActivity : AppCompatActivity() {
         val activeNetwork = connectivityManager.activeNetwork
         val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
         
-        if (capabilities == null || !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
-            Toast.makeText(this@MainActivity, "Please connect to WiFi to upload.", Toast.LENGTH_SHORT).show()
+        if (capabilities == null || !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+            Toast.makeText(this@MainActivity, "Please connect to the internet to upload.", Toast.LENGTH_SHORT).show()
             return
         }
 
