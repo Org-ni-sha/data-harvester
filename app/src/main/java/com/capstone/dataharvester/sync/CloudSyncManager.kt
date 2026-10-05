@@ -127,11 +127,10 @@ class CloudSyncManager(private val context: Context) {
     
     private suspend fun fetchHistoricalCount() {
         val deviceIdManager = com.capstone.dataharvester.util.DeviceIdManager(context)
-        val hardwareId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        val deviceModel = deviceIdManager.getDeviceModel()
         
-        // Includes both current_device_id and previous_device_id in case users manually updated it
-        val deviceIdsQuery = "SELECT current_device_id FROM device_identity WHERE hardware_id = '$hardwareId' UNION SELECT previous_device_id FROM device_identity WHERE hardware_id = '$hardwareId' AND previous_device_id IS NOT NULL"
-        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_id IN ($deviceIdsQuery)) as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN ($deviceIdsQuery)) as app_count;"
+        // Sum up all records that match this exact device_model, regardless of their device_id or hardware_id
+        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_model = '$deviceModel') as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN (SELECT DISTINCT device_id FROM usage_records WHERE device_model = '$deviceModel')) as app_count;"
         
         val jsonBody = org.json.JSONObject()
         jsonBody.put("database", dbName)
@@ -149,6 +148,7 @@ class CloudSyncManager(private val context: Context) {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val responseStr = response.body?.string()
+                    android.util.Log.i("SyncManager", "Historical count response: $responseStr")
                     if (responseStr != null) {
                         val json = org.json.JSONObject(responseStr)
                         val dataArray = json.optJSONArray("data")
@@ -162,12 +162,15 @@ class CloudSyncManager(private val context: Context) {
                                 .putInt("historic_usage_count", usageCount)
                                 .putInt("historic_app_usage_count", appCount)
                                 .apply()
+                            android.util.Log.i("SyncManager", "Saved historical counts: $usageCount, $appCount")
                         }
                     }
+                } else {
+                    android.util.Log.e("SyncManager", "Failed to fetch historical count: Code ${response.code} - ${response.body?.string()}")
                 }
             }
         } catch (e: Exception) {
-            Log.e("SyncManager", "Failed to fetch historical count", e)
+            android.util.Log.e("SyncManager", "Failed to fetch historical count", e)
         }
     }
 }

@@ -21,7 +21,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v4: Added upload_history table for tracking cloud sync operations
  *  - v5: APK versioning for app updates
  *  - v6: Added start_time and end_time columns to app_usage_records for tracking network-switch snapshots
- *  - v7: Added device_identity and promo_record tables for new features
+ *  - v7: Added Fix Limit problem and added network provider
+ *  - v8: Added device_identity and promo_record tables for new features
  */
 @Database(
     entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class, PromoRecord::class],
