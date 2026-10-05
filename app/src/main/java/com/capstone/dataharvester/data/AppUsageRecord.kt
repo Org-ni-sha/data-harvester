@@ -72,6 +72,10 @@ data class AppUsageRecord(
     /** 1 if system/pre-installed app, 0 if user-installed */
     @ColumnInfo(name = "is_system_app")
     val isSystemApp: Int,
+    
+    /** Timezone offset from UTC in minutes */
+    @ColumnInfo(name = "utc_offset_minutes", defaultValue = "480")
+    val utcOffsetMinutes: Int = 480,
 
     /** Flag indicating if this record has been synced to the backend */
     @ColumnInfo(name = "is_synced")

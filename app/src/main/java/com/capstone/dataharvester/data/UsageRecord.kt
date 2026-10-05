@@ -6,7 +6,7 @@ import androidx.room.PrimaryKey
 
 /**
  * Room entity representing a single data usage observation snapshot.
- * One row is inserted every ~2 minutes by the DataCollectionService.
+ * One row is inserted every 30 seconds by the DataCollectionService.
  *
  * Column names use snake_case to match the CSV export schema.
  */
@@ -88,6 +88,14 @@ data class UsageRecord(
     /** Device manufacturer + model (e.g., "Samsung SM-A546E") */
     @ColumnInfo(name = "device_model")
     val deviceModel: String = "",
+    
+    /** Network operator/carrier of the active SIM */
+    @ColumnInfo(name = "network_operator", defaultValue = "Unknown")
+    val networkOperator: String = "Unknown",
+    
+    /** Timezone offset from UTC in minutes */
+    @ColumnInfo(name = "utc_offset_minutes", defaultValue = "480")
+    val utcOffsetMinutes: Int = 480,
 
     /** Flag indicating if this record has been synced to the backend */
     @ColumnInfo(name = "is_synced")

@@ -10,7 +10,7 @@ interface PromoRecordDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(promoRecord: PromoRecord)
 
-    @Query("SELECT * FROM promo_records WHERE device_id = :deviceId ORDER BY date_availed DESC")
+    @Query("SELECT * FROM promo_records WHERE device_id = :deviceId ORDER BY created_at DESC")
     suspend fun getByDeviceId(deviceId: String): List<PromoRecord>
     
     @Query("SELECT * FROM promo_records WHERE is_synced = 0")

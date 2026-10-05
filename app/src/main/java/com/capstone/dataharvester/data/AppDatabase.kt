@@ -21,13 +21,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v4: Added upload_history table for tracking cloud sync operations
  *  - v5: APK versioning for app updates
  *  - v6: Added start_time and end_time columns to app_usage_records for tracking network-switch snapshots
- *  - v7: Added Fix Limit problem and added network provider
+ *  - v7: Internal sync architecture upgrades (empty placeholder)
  *  - v8: Added device_identity and promo_record tables for new features
+ *  - v9: Added network_operator, utc_offset_minutes, and synced promo_records
  */
 @Database(
     entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class, PromoRecord::class],
-    version = 8,
-    exportSchema = true
+    version = 9,
+    exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -164,6 +165,60 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_promo_records_device_id ON promo_records(device_id)")
             }
         }
+        
+        /**
+         * Migration from v8 to v9:
+         * - Adds network_operator and utc_offset_minutes to usage_records
+         * - Adds utc_offset_minutes to app_usage_records
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE usage_records ADD COLUMN network_operator TEXT NOT NULL DEFAULT 'Unknown'")
+                db.execSQL("ALTER TABLE usage_records ADD COLUMN utc_offset_minutes INTEGER NOT NULL DEFAULT 480")
+                db.execSQL("ALTER TABLE app_usage_records ADD COLUMN utc_offset_minutes INTEGER NOT NULL DEFAULT 480")
+                
+                // Migrate promo_records from v8 schema to v9 schema
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS promo_records_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        device_id TEXT NOT NULL,
+                        promo_name TEXT NOT NULL,
+                        promo_price REAL NOT NULL,
+                        promo_duration INTEGER NOT NULL,
+                        promo_data_allowance REAL NOT NULL,
+                        custom_data_allowance REAL NOT NULL,
+                        has_unlimited_data INTEGER NOT NULL,
+                        sms_allocation TEXT NOT NULL,
+                        call_allocation TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        start_date TEXT NOT NULL,
+                        expiry_date TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        is_synced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                
+                db.execSQL("""
+                    INSERT INTO promo_records_new (
+                        id, device_id, promo_name, promo_price, promo_duration, promo_data_allowance, 
+                        custom_data_allowance, has_unlimited_data, sms_allocation, call_allocation, 
+                        provider, start_date, expiry_date, created_at, status, is_synced
+                    )
+                    SELECT 
+                        id, device_id, promo_name, price, validity_days, data_allowance_mb, 
+                        0.0, 0, 'None', 'None', 
+                        network_provider, '', '', date_availed, 
+                        CASE WHEN is_active = 1 THEN 'Active' ELSE 'Expired' END, is_synced
+                    FROM promo_records
+                """.trimIndent())
+                
+                db.execSQL("DROP TABLE promo_records")
+                db.execSQL("ALTER TABLE promo_records_new RENAME TO promo_records")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_promo_records_device_id ON promo_records(device_id)")
+            }
+        }
+
         /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.
@@ -182,7 +237,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
                     )
                     .build()
                     .also { INSTANCE = it }
