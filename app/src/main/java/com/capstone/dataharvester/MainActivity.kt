@@ -104,6 +104,31 @@ class MainActivity : AppCompatActivity() {
 
         // Display device identity
         displayDeviceInfo()
+        
+        // Register device identity in database
+        mainScope.launch {
+            val hardwareId = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            val currentDeviceId = deviceIdManager.getDeviceId()
+            val deviceModel = deviceIdManager.getDeviceModel()
+            
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val dao = db.deviceIdentityDao()
+            
+            val existing = withContext(Dispatchers.IO) { dao.getLatestByHardwareId(hardwareId) }
+            if (existing == null || existing.current_device_id != currentDeviceId) {
+                withContext(Dispatchers.IO) {
+                    dao.insert(
+                        com.capstone.dataharvester.data.DeviceIdentity(
+                            current_device_id = currentDeviceId,
+                            previous_device_id = existing?.current_device_id,
+                            hardware_id = hardwareId ?: "unknown",
+                            device_model = deviceModel,
+                            linked_at = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
 
         // Button click listeners
         startButton.setOnClickListener { startCollection() }

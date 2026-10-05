@@ -49,6 +49,15 @@ class CloudSyncManager(private val context: Context) {
             sqlBuilder.append("VALUES (${record.timestamp}, '${record.datetimeStr}', '${record.deviceId}', '$escapedPackageName', '$escapedAppName', ${record.uid}, ${record.bytesRx}, ${record.bytesTx}, ${record.bytesTotal}, '${record.networkType}', '${record.queryStart}', ${record.isSystemApp});\n")
         }
 
+        // Add device_identity (syncing locally tracked identity)
+        val deviceIdentityDao = db.deviceIdentityDao()
+        val unsyncedIdentity = deviceIdentityDao.getAllUnsynced()
+        unsyncedIdentity.forEach { record ->
+            val prevDeviceStr = if (record.previous_device_id != null) "'${record.previous_device_id}'" else "NULL"
+            sqlBuilder.append("INSERT OR REPLACE INTO device_identity (current_device_id, previous_device_id, hardware_id, device_model, linked_at) ")
+            sqlBuilder.append("VALUES ('${record.current_device_id}', $prevDeviceStr, '${record.hardware_id}', '${record.device_model}', ${record.linked_at});\n")
+        }
+
         // Calculate payload sizes and log upload statistics in upload_history table
         val totalSynced = unsyncedUsage.size + unsyncedAppUsage.size
         val deviceId = com.capstone.dataharvester.util.DeviceIdManager(context).getDeviceId()
@@ -93,6 +102,10 @@ class CloudSyncManager(private val context: Context) {
                     if (unsyncedAppUsage.isNotEmpty()) {
                         val appIds = unsyncedAppUsage.map { it.id }
                         appUsageDao.markAsSynced(appIds)
+                    }
+                    if (unsyncedIdentity.isNotEmpty()) {
+                        val identityIds = unsyncedIdentity.map { it.id }
+                        deviceIdentityDao.markAsSynced(identityIds)
                     }
                     Pair(unsyncedUsage.size, unsyncedAppUsage.size)
                 } else {

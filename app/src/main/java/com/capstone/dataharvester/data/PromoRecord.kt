@@ -3,6 +3,7 @@ package com.capstone.dataharvester.data
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.Index
+import androidx.room.ColumnInfo
 
 @Entity(
     tableName = "promo_records",
@@ -17,6 +18,6 @@ data class PromoRecord(
     val validity_days: Int,
     val price: Double,
     val date_availed: Long,
-    val is_active: Int = 1,
-    val is_synced: Int = 0
+    @ColumnInfo(defaultValue = "1") val is_active: Int = 1,
+    @ColumnInfo(defaultValue = "0") val is_synced: Int = 0
 )

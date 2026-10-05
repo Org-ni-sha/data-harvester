@@ -22,17 +22,18 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v5: APK versioning for app updates
  *  - v6: Added start_time and end_time columns to app_usage_records for tracking network-switch snapshots
  *  - v7: Added device_identity and promo_record tables for new features
- *  - v8: Added tracking_status column to promo_records table for tracking promo status
  */
 @Database(
-    entities = [UsageRecord::class, AppUsageRecord::class],
-    version = 7,
+    entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class, PromoRecord::class],
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun usageDao(): UsageDao
     abstract fun appUsageDao(): AppUsageDao
+    abstract fun deviceIdentityDao(): DeviceIdentityDao
+    abstract fun promoRecordDao(): PromoRecordDao
 
     companion object {
         @Volatile
@@ -121,6 +122,46 @@ abstract class AppDatabase : RoomDatabase() {
                 // Future tables for promos and device ID matching
             }
         }
+        
+        /**
+         * Migration from v7 to v8:
+         * - Creates device_identity and promo_records tables
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS device_identity (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        current_device_id TEXT NOT NULL,
+                        previous_device_id TEXT,
+                        hardware_id TEXT NOT NULL,
+                        device_model TEXT NOT NULL,
+                        linked_at INTEGER NOT NULL,
+                        is_synced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_device_identity_hardware_id ON device_identity(hardware_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_device_identity_current_device_id ON device_identity(current_device_id)")
+                
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS promo_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        device_id TEXT NOT NULL,
+                        promo_name TEXT NOT NULL,
+                        network_provider TEXT NOT NULL,
+                        data_allowance_mb INTEGER NOT NULL,
+                        validity_days INTEGER NOT NULL,
+                        price REAL NOT NULL,
+                        date_availed INTEGER NOT NULL,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        is_synced INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_promo_records_device_id ON promo_records(device_id)")
+            }
+        }
 
         /**
          * Get the singleton database instance.
@@ -139,7 +180,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
-                        MIGRATION_6_7
+                        MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     .fallbackToDestructiveMigration()
                     .build()
