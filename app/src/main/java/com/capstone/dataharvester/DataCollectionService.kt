@@ -297,24 +297,7 @@ class DataCollectionService : Service() {
                 val datetimeStr = isoFormat.format(now.time)
                 val dateStr = dateOnlyFormat.format(now.time)
                 val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(timestamp) / 60000
-                
-                var networkOperator = "Unknown"
-                try {
-                    val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
-                    val subId = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId()
-                    val simManager = if (subId != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                        telephonyManager.createForSubscriptionId(subId)
-                    } else {
-                        telephonyManager
-                    }
-                    val opName = simManager.networkOperatorName
-                    if (!opName.isNullOrBlank()) {
-                        networkOperator = opName
-                    }
-                } catch (e: Exception) {
-                    // Ignore and fallback to "Unknown"
-                }
-
+                val networkOperator = deviceHelper.getNetworkProvider()
                 val hour = now.get(Calendar.HOUR_OF_DAY)
                 val minute = now.get(Calendar.MINUTE)
 

@@ -209,4 +209,34 @@ class DeviceInfoHelper(private val context: Context) {
             "$manufacturer $model"
         }
     }
+
+    /**
+     * Get the name of the active data network provider (e.g., Globe, Smart).
+     * Focuses on the default data subscription if dual-SIM.
+     */
+    fun getNetworkProvider(): String {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            var providerName: String? = null
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val subId = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId()
+                if (subId != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    val simManager = tm.createForSubscriptionId(subId)
+                    providerName = simManager.simOperatorName.takeIf { !it.isNullOrBlank() }
+                        ?: simManager.networkOperatorName.takeIf { !it.isNullOrBlank() }
+                }
+            }
+            
+            if (providerName.isNullOrBlank()) {
+                providerName = tm.simOperatorName.takeIf { !it.isNullOrBlank() }
+                    ?: tm.networkOperatorName.takeIf { !it.isNullOrBlank() }
+            }
+            
+            providerName?.trim()?.takeIf { it.isNotBlank() } ?: "Unknown"
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get network provider", e)
+            "Unknown"
+        }
+    }
 }
