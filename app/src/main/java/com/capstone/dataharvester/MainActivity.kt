@@ -434,17 +434,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCloudSync() {
-        // Only sync when device is connected to the internet
+        // Only sync when device is connected to unmetered network (WiFi)
         val syncConstraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiredNetworkType(NetworkType.UNMETERED)
             .build()
 
-        // Schedule to run every 4 hours. Automated upload
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(4, TimeUnit.HOURS)
+        // Schedule to run every 1 hour. Automated upload
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
             .setConstraints(syncConstraints)
+            .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
             .build()
 
-        // Queue the work. UPDATE ensures that the new daily interval is applied if already scheduled.
+        // Queue the work. UPDATE ensures that the new interval is applied if already scheduled.
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "CloudSQLiteSync",
             ExistingPeriodicWorkPolicy.UPDATE,
@@ -453,25 +454,37 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun syncToCloud() {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        
+        if (capabilities == null || !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
+            Toast.makeText(this@MainActivity, "Please connect to WiFi to upload.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         uploadButton.isEnabled = false
         uploadButton.text = "Uploading..."
         
         mainScope.launch {
             val syncManager = CloudSyncManager(this@MainActivity)
-            val resultCounts = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 syncManager.syncPendingData()
             }
             
-            if (resultCounts != null) {
-                val totalSynced = resultCounts.first + resultCounts.second
-                if (totalSynced > 0) {
-                    Toast.makeText(this@MainActivity, "Uploaded %,d (%,d usage, %,d app usage) records successfully!".format(totalSynced, resultCounts.first, resultCounts.second), Toast.LENGTH_SHORT).show()
-                    updateStats() // Update the stats count on screen
-                } else {
-                    Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+            when (result) {
+                is com.capstone.dataharvester.sync.SyncResult.Success -> {
+                    val totalSynced = result.usage + result.app
+                    if (totalSynced > 0) {
+                        Toast.makeText(this@MainActivity, "Uploaded %,d (%,d usage, %,d app usage) records successfully!".format(totalSynced, result.usage, result.app), Toast.LENGTH_SHORT).show()
+                        updateStats() // Update the stats count on screen
+                    } else {
+                        Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+                    }
                 }
-            } else {
-                Toast.makeText(this@MainActivity, "Upload failed! Please try again. Check internet connection and logs.", Toast.LENGTH_LONG).show()
+                is com.capstone.dataharvester.sync.SyncResult.Failure -> {
+                    Toast.makeText(this@MainActivity, "Upload failed! ${result.reason}. Please try again. Check internet connection and logs.", Toast.LENGTH_LONG).show()
+                }
             }
             
             uploadButton.isEnabled = true

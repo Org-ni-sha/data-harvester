@@ -10,9 +10,11 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
     override suspend fun doWork(): Result {
         return try {
             val syncManager = CloudSyncManager(applicationContext)
-            syncManager.syncPendingData()
-            // Do the same for appUsageDao...
-            Result.success()
+            val result = syncManager.syncPendingData()
+            when (result) {
+                is SyncResult.Success -> Result.success()
+                is SyncResult.Failure -> Result.retry()
+            }
         } catch (e: Exception) {
             Result.retry()
         }
