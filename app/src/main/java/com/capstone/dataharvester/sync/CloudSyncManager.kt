@@ -54,8 +54,10 @@ class CloudSyncManager(private val context: Context) {
         val unsyncedIdentity = deviceIdentityDao.getAllUnsynced()
         unsyncedIdentity.forEach { record ->
             val prevDeviceStr = if (record.previous_device_id != null) "'${record.previous_device_id}'" else "NULL"
+            
+            // Automation: If local previous_device_id is NULL (e.g. fresh reinstall), fallback to checking the cloud DB for the last known device_id of this hardware
             sqlBuilder.append("INSERT OR REPLACE INTO device_identity (current_device_id, previous_device_id, hardware_id, device_model, linked_at) ")
-            sqlBuilder.append("VALUES ('${record.current_device_id}', $prevDeviceStr, '${record.hardware_id}', '${record.device_model}', ${record.linked_at});\n")
+            sqlBuilder.append("VALUES ('${record.current_device_id}', COALESCE($prevDeviceStr, (SELECT current_device_id FROM device_identity WHERE hardware_id = '${record.hardware_id}' AND current_device_id != '${record.current_device_id}' ORDER BY linked_at DESC LIMIT 1)), '${record.hardware_id}', '${record.device_model}', ${record.linked_at});\n")
         }
 
         // Calculate payload sizes and log upload statistics in upload_history table
@@ -107,6 +109,10 @@ class CloudSyncManager(private val context: Context) {
                         val identityIds = unsyncedIdentity.map { it.id }
                         deviceIdentityDao.markAsSynced(identityIds)
                     }
+                    
+                    // Fetch historical counts to persist locally
+                    fetchHistoricalCount()
+                    
                     Pair(unsyncedUsage.size, unsyncedAppUsage.size)
                 } else {
                     Log.e("SyncManager", "Failed to sync: Code ${response.code} - ${response.body?.string()}")
@@ -116,6 +122,52 @@ class CloudSyncManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e("SyncManager", "Error during sync", e)
             null
+        }
+    }
+    
+    private suspend fun fetchHistoricalCount() {
+        val deviceIdManager = com.capstone.dataharvester.util.DeviceIdManager(context)
+        val hardwareId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        
+        // Includes both current_device_id and previous_device_id in case users manually updated it
+        val deviceIdsQuery = "SELECT current_device_id FROM device_identity WHERE hardware_id = '$hardwareId' UNION SELECT previous_device_id FROM device_identity WHERE hardware_id = '$hardwareId' AND previous_device_id IS NOT NULL"
+        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_id IN ($deviceIdsQuery)) as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN ($deviceIdsQuery)) as app_count;"
+        
+        val jsonBody = org.json.JSONObject()
+        jsonBody.put("database", dbName)
+        jsonBody.put("sql", sql)
+        
+        val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url(gatewayUrl)
+            .post(requestBody)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Accept", "application/json")
+            .build()
+            
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val responseStr = response.body?.string()
+                    if (responseStr != null) {
+                        val json = org.json.JSONObject(responseStr)
+                        val dataArray = json.optJSONArray("data")
+                        if (dataArray != null && dataArray.length() > 0) {
+                            val row = dataArray.getJSONObject(0)
+                            val usageCount = row.optInt("usage_count", 0)
+                            val appCount = row.optInt("app_count", 0)
+                            
+                            val prefs = context.getSharedPreferences("historical_counts", android.content.Context.MODE_PRIVATE)
+                            prefs.edit()
+                                .putInt("historic_usage_count", usageCount)
+                                .putInt("historic_app_usage_count", appCount)
+                                .apply()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SyncManager", "Failed to fetch historical count", e)
         }
     }
 }
