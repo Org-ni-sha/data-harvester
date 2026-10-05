@@ -21,16 +21,16 @@ class CloudSyncManager(private val context: Context) {
 
     /**
      * Uploads local unsynced records to the cloud database.
-     * Returns the number of synced records, or -1 if the sync failed.
+     * Returns a Pair of (usageRecordsSynced, appUsageRecordsSynced) or null if sync failed.
      */
-    suspend fun syncPendingData(): Int {
+    suspend fun syncPendingData(): Pair<Int, Int>? {
         val usageDao = db.usageDao()
         val appUsageDao = db.appUsageDao()
 
         val unsyncedUsage = usageDao.getUnsyncedRecords()
         val unsyncedAppUsage = appUsageDao.getUnsyncedRecords()
 
-        if (unsyncedUsage.isEmpty() && unsyncedAppUsage.isEmpty()) return 0
+        if (unsyncedUsage.isEmpty() && unsyncedAppUsage.isEmpty()) return Pair(0, 0)
 
         // 1. Construct bulk SQL script
         val sqlBuilder = StringBuilder()
@@ -47,15 +47,6 @@ class CloudSyncManager(private val context: Context) {
             val escapedAppName = record.appName.replace("'", "''")
             sqlBuilder.append("INSERT INTO app_usage_records (timestamp, datetime_str, device_id, package_name, app_name, uid, bytes_rx, bytes_tx, bytes_total, network_type, query_start, is_system_app) ")
             sqlBuilder.append("VALUES (${record.timestamp}, '${record.datetimeStr}', '${record.deviceId}', '$escapedPackageName', '$escapedAppName', ${record.uid}, ${record.bytesRx}, ${record.bytesTx}, ${record.bytesTotal}, '${record.networkType}', '${record.queryStart}', ${record.isSystemApp});\n")
-        }
-
-        // Add device_identity (syncing locally tracked identity)
-        val deviceIdentityDao = db.deviceIdentityDao()
-        val unsyncedIdentity = deviceIdentityDao.getAllUnsynced()
-        unsyncedIdentity.forEach { record ->
-            val prevDeviceStr = if (record.previous_device_id != null) "'${record.previous_device_id}'" else "NULL"
-            sqlBuilder.append("INSERT OR REPLACE INTO device_identity (current_device_id, previous_device_id, hardware_id, device_model, linked_at) ")
-            sqlBuilder.append("VALUES ('${record.current_device_id}', $prevDeviceStr, '${record.hardware_id}', '${record.device_model}', ${record.linked_at});\n")
         }
 
         // Calculate payload sizes and log upload statistics in upload_history table
@@ -92,7 +83,6 @@ class CloudSyncManager(private val context: Context) {
         return try {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    val totalSynced = unsyncedUsage.size + unsyncedAppUsage.size
                     Log.i("SyncManager", "Synced $totalSynced records successfully!")
                     
                     // 3. Mark as synced in local DB
@@ -104,67 +94,15 @@ class CloudSyncManager(private val context: Context) {
                         val appIds = unsyncedAppUsage.map { it.id }
                         appUsageDao.markAsSynced(appIds)
                     }
-                    if (unsyncedIdentity.isNotEmpty()) {
-                        val identityIds = unsyncedIdentity.map { it.id }
-                        deviceIdentityDao.markAsSynced(identityIds)
-                    }
-                    
-                    // Fetch historical counts to persist locally
-                    fetchHistoricalCount()
-                    
-                    totalSynced
+                    Pair(unsyncedUsage.size, unsyncedAppUsage.size)
                 } else {
                     Log.e("SyncManager", "Failed to sync: Code ${response.code} - ${response.body?.string()}")
-                    -1
+                    null
                 }
             }
         } catch (e: Exception) {
             Log.e("SyncManager", "Error during sync", e)
-            -1
-        }
-    }
-    
-    private suspend fun fetchHistoricalCount() {
-        val deviceIdManager = com.capstone.dataharvester.util.DeviceIdManager(context)
-        val hardwareId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-        
-        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_id IN (SELECT current_device_id FROM device_identity WHERE hardware_id = '$hardwareId')) as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN (SELECT current_device_id FROM device_identity WHERE hardware_id = '$hardwareId')) as app_count;"
-        
-        val jsonBody = org.json.JSONObject()
-        jsonBody.put("database", dbName)
-        jsonBody.put("sql", sql)
-        
-        val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
-            .url(gatewayUrl)
-            .post(requestBody)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Accept", "application/json")
-            .build()
-            
-        try {
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val responseStr = response.body?.string()
-                    if (responseStr != null) {
-                        val json = org.json.JSONObject(responseStr)
-                        val dataArray = json.optJSONArray("data")
-                        if (dataArray != null && dataArray.length() > 0) {
-                            val row = dataArray.getJSONObject(0)
-                            val usageCount = row.optInt("usage_count", 0)
-                            val appCount = row.optInt("app_count", 0)
-                            
-                            val prefs = context.getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
-                            prefs.edit()
-                                .putInt("historic_usage_count", usageCount)
-                                .putInt("historic_app_usage_count", appCount)
-                                .apply()
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("SyncManager", "Failed to fetch historical count", e)
+            null
         }
     }
 }

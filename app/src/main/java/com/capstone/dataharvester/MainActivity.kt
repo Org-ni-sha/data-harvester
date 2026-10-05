@@ -104,31 +104,6 @@ class MainActivity : AppCompatActivity() {
 
         // Display device identity
         displayDeviceInfo()
-        
-        // Register device identity in database
-        mainScope.launch {
-            val hardwareId = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-            val currentDeviceId = deviceIdManager.getDeviceId()
-            val deviceModel = deviceIdManager.getDeviceModel()
-            
-            val db = AppDatabase.getInstance(this@MainActivity)
-            val dao = db.deviceIdentityDao()
-            
-            val existing = withContext(Dispatchers.IO) { dao.getLatestByHardwareId(hardwareId) }
-            if (existing == null || existing.current_device_id != currentDeviceId) {
-                withContext(Dispatchers.IO) {
-                    dao.insert(
-                        com.capstone.dataharvester.data.DeviceIdentity(
-                            current_device_id = currentDeviceId,
-                            previous_device_id = existing?.current_device_id,
-                            hardware_id = hardwareId ?: "unknown",
-                            device_model = deviceModel,
-                            linked_at = System.currentTimeMillis()
-                        )
-                    )
-                }
-            }
-        }
 
         // Button click listeners
         startButton.setOnClickListener { startCollection() }
@@ -353,18 +328,9 @@ class MainActivity : AppCompatActivity() {
 
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
-                
-                val prefs = getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
-                val historicUsage = prefs.getInt("historic_usage_count", 0)
-                val historicAppUsage = prefs.getInt("historic_app_usage_count", 0)
 
-                // If historic is bigger than local, use historic. Else just use local (this avoids weird UI glitches before first sync)
-                val displayUsage = maxOf(count, historicUsage)
-                val displayAppUsage = maxOf(appCount, historicAppUsage)
-                val displayTotal = displayUsage + displayAppUsage
-
-                recordCountText.text = "%,d (%,d usage, %,d app usage)".format(displayTotal, displayUsage, displayAppUsage)
-                appRecordCountText.text = "%,d".format(displayAppUsage) // Can be hidden in XML later if needed
+                recordCountText.text = "%,d".format(count)
+                appRecordCountText.text = "%,d".format(appCount)
                 
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {
@@ -457,15 +423,18 @@ class MainActivity : AppCompatActivity() {
         
         mainScope.launch {
             val syncManager = CloudSyncManager(this@MainActivity)
-            val resultCount = withContext(Dispatchers.IO) {
+            val resultCounts = withContext(Dispatchers.IO) {
                 syncManager.syncPendingData()
             }
             
-            if (resultCount > 0) {
-                Toast.makeText(this@MainActivity, "Uploaded $resultCount records successfully!", Toast.LENGTH_SHORT).show()
-                updateStats() // Update the stats count on screen
-            } else if (resultCount == 0) {
-                Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+            if (resultCounts != null) {
+                val totalSynced = resultCounts.first + resultCounts.second
+                if (totalSynced > 0) {
+                    Toast.makeText(this@MainActivity, "Uploaded %,d (%,d usage, %,d app usage) records successfully!".format(totalSynced, resultCounts.first, resultCounts.second), Toast.LENGTH_SHORT).show()
+                    updateStats() // Update the stats count on screen
+                } else {
+                    Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+                }
             } else {
                 Toast.makeText(this@MainActivity, "Upload failed! Please try again. Check internet connection and logs.", Toast.LENGTH_LONG).show()
             }
