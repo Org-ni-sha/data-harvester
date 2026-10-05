@@ -18,6 +18,7 @@ data class DeviceIdentity(
     val previous_device_id: String?,
     val hardware_id: String,
     val device_model: String,
+    @ColumnInfo(defaultValue = "Unknown") val network_provider: String = "Unknown",
     val linked_at: Long,
     @ColumnInfo(defaultValue = "0") val is_synced: Int = 0
 )

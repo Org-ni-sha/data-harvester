@@ -136,6 +136,7 @@ abstract class AppDatabase : RoomDatabase() {
                         previous_device_id TEXT,
                         hardware_id TEXT NOT NULL,
                         device_model TEXT NOT NULL,
+                        network_provider TEXT NOT NULL DEFAULT 'Unknown',
                         linked_at INTEGER NOT NULL,
                         is_synced INTEGER NOT NULL DEFAULT 0
                     )
@@ -162,7 +163,6 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_promo_records_device_id ON promo_records(device_id)")
             }
         }
-
         /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.

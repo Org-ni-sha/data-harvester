@@ -102,8 +102,8 @@ class MainActivity : AppCompatActivity() {
         // Make the status dot circular
         applyCircleDot()
 
-        // Display device identity
-        displayDeviceInfo()
+        // Display device identity and get network provider
+        val currentNetworkProvider = displayDeviceInfo()
         
         // Register device identity in database
         mainScope.launch {
@@ -115,7 +115,7 @@ class MainActivity : AppCompatActivity() {
             val dao = db.deviceIdentityDao()
             
             val existing = withContext(Dispatchers.IO) { dao.getLatestByHardwareId(hardwareId) }
-            if (existing == null || existing.current_device_id != currentDeviceId) {
+            if (existing == null || existing.current_device_id != currentDeviceId || existing.network_provider != currentNetworkProvider) {
                 withContext(Dispatchers.IO) {
                     dao.insert(
                         com.capstone.dataharvester.data.DeviceIdentity(
@@ -123,6 +123,7 @@ class MainActivity : AppCompatActivity() {
                             previous_device_id = existing?.current_device_id,
                             hardware_id = hardwareId ?: "unknown",
                             device_model = deviceModel,
+                            network_provider = currentNetworkProvider,
                             linked_at = System.currentTimeMillis()
                         )
                     )
@@ -165,7 +166,7 @@ class MainActivity : AppCompatActivity() {
 
     // ─── Device Info Display ──────────────────────────────────────────────
 
-    private fun displayDeviceInfo() {
+    private fun displayDeviceInfo(): String {
         val deviceId = deviceIdManager.getDeviceId()
         val deviceModel = deviceIdManager.getDeviceModel()
 
@@ -199,6 +200,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         networkProviderText.text = "Provider: $networkProvider"
+        return networkProvider
     }
 
     // ─── Collection Control ────────────────────────────────────────────────
@@ -353,9 +355,17 @@ class MainActivity : AppCompatActivity() {
 
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
+                
+                val prefs = getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
+                val historicUsage = prefs.getInt("historic_usage_count", 0)
+                val historicAppUsage = prefs.getInt("historic_app_usage_count", 0)
 
-                recordCountText.text = "%,d".format(count)
-                appRecordCountText.text = "%,d".format(appCount)
+                // If historic is bigger than local, use historic. Else just use local
+                val displayUsage = maxOf(count, historicUsage)
+                val displayAppUsage = maxOf(appCount, historicAppUsage)
+
+                recordCountText.text = "%,d".format(displayUsage)
+                appRecordCountText.text = "%,d".format(displayAppUsage)
                 
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {
