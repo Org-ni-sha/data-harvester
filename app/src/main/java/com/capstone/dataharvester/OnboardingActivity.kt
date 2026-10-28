@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -26,9 +27,9 @@ import com.capstone.dataharvester.util.NetworkStatsHelper
  *  1. POST_NOTIFICATIONS (Android 13+ runtime permission)
  *  2. READ_PHONE_STATE (runtime permission for signal strength)
  *  3. PACKAGE_USAGE_STATS (special — must be granted in Settings)
- *  4. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (recommended, not required — see allPermissionsGranted)
+ *  4. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (special — must be granted in Settings)
  *
- * Once 1-3 are granted, the "GET STARTED" button becomes active and navigates
+ * Once all granted, the "GET STARTED" button becomes active and navigates
  * to MainActivity. The completion state is saved so subsequent launches
  * skip this screen (unless a permission is revoked).
  */
@@ -118,16 +119,11 @@ class OnboardingActivity : AppCompatActivity() {
         return powerManager.isIgnoringBatteryOptimizations(packageName)
     }
 
-    /**
-     * Battery optimization is recommended but not required: on Realme/Oppo/Vivo/Xiaomi
-     * the system request opens the OEM's own "background usage" switch, which apps
-     * cannot read, so isIgnoringBatteryOptimizations() can stay false even after the
-     * user allows it. Requiring it would leave those users stuck on this screen.
-     */
     private fun allPermissionsGranted(): Boolean {
         return isNotificationPermissionGranted() &&
                 isPhoneStatePermissionGranted() &&
-                isUsageAccessGranted()
+                isUsageAccessGranted() &&
+                isBatteryOptimizationIgnored()
     }
 
     // ─── Permission Requests ──────────────────────────────────────────────
@@ -204,25 +200,32 @@ class OnboardingActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Some phones (Realme/Oppo on Android 15, for example) skip the system popup and
+     * open the app's "App battery usage" page instead. There, the "Allow background
+     * usage" switch alone keeps the app "Optimized"; only choosing "Unrestricted"
+     * (tap the words, not the switch) exempts it, which is what this screen checks.
+     * So explain that before opening it.
+     */
     private fun requestBatteryOptimization() {
         if (isBatteryOptimizationIgnored()) return
 
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val askedBefore = prefs.getBoolean("asked_battery", false)
-        prefs.edit().putBoolean("asked_battery", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("Allow unrestricted battery use")
+            .setMessage(
+                "If a popup asks to let Data Harvester always run in the background, tap Allow.\n\n" +
+                "If a battery page opens instead, tap the words \"Allow background usage\" " +
+                "(not only the switch) and choose \"Unrestricted\".\n\n" +
+                "If you see a list of apps, find Data Harvester and choose " +
+                "\"Don't optimize\" or \"Allow\"."
+            )
+            .setPositiveButton("OPEN SETTINGS") { _, _ -> openBatterySettings() }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
 
+    private fun openBatterySettings() {
         try {
-            if (askedBefore) {
-                // The direct request didn't take (common on OEM skins): open the full
-                // list, where the app can be set to "Don't optimize" / "Allow"
-                Toast.makeText(
-                    this,
-                    "Find \"Data Harvester\" and set it to Don't optimize",
-                    Toast.LENGTH_LONG
-                ).show()
-                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                return
-            }
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             intent.data = Uri.parse("package:$packageName")
             startActivity(intent)
@@ -280,13 +283,12 @@ class OnboardingActivity : AppCompatActivity() {
             batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.status_active))
             batteryStatus.isClickable = false
         } else {
-            // Optional (see allPermissionsGranted), so it doesn't block Get Started
-            batteryStatus.text = "RECOMMENDED"
+            batteryStatus.text = grantAction
             batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
             batteryStatus.isClickable = true
         }
 
-        // Get Started button — only enabled when the required permissions are granted
+        // Get Started button — only enabled when all granted
         getStartedButton.isEnabled = allPermissionsGranted()
         if (allPermissionsGranted()) {
             getStartedButton.alpha = 1.0f
