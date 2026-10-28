@@ -106,23 +106,25 @@ class MainActivity : AppCompatActivity() {
         // Display device identity and get network provider
         val currentNetworkProvider = displayDeviceInfo()
         
-        // Register device identity in database
+        // Register device identity in database.
+        // No hardware identifier (ANDROID_ID) is read: the hardware_id column is kept only so
+        // the cloud's ON CONFLICT(hardware_id) upsert still works, and holds the random
+        // install UUID instead.
         mainScope.launch {
-            val hardwareId = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
             val currentDeviceId = deviceIdManager.getDeviceId()
             val deviceModel = deviceIdManager.getDeviceModel()
-            
+
             val db = AppDatabase.getInstance(this@MainActivity)
             val dao = db.deviceIdentityDao()
-            
-            val existing = withContext(Dispatchers.IO) { dao.getLatestByHardwareId(hardwareId) }
-            if (existing == null || existing.current_device_id != currentDeviceId || existing.network_provider != currentNetworkProvider) {
+
+            val existing = withContext(Dispatchers.IO) { dao.getLatestByDeviceId(currentDeviceId) }
+            if (existing == null || existing.network_provider != currentNetworkProvider || existing.device_model != deviceModel) {
                 withContext(Dispatchers.IO) {
                     dao.insert(
                         com.capstone.dataharvester.data.DeviceIdentity(
                             current_device_id = currentDeviceId,
-                            previous_device_id = existing?.current_device_id,
-                            hardware_id = hardwareId ?: "unknown",
+                            previous_device_id = null,
+                            hardware_id = currentDeviceId,
                             device_model = deviceModel,
                             network_provider = currentNetworkProvider,
                             linked_at = System.currentTimeMillis()
@@ -291,13 +293,17 @@ class MainActivity : AppCompatActivity() {
                     DataCollectionService.PREFS_NAME,
                     Context.MODE_PRIVATE
                 )
+                // Clear collection checkpoints too, so the next run starts a fresh
+                // baseline instead of reusing state from before the reset
                 prefs.edit()
                     .putBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+                    .remove(DataCollectionService.PREF_LAST_CUMULATIVE_RX)
+                    .remove(DataCollectionService.PREF_LAST_CUMULATIVE_TX)
+                    .remove(DataCollectionService.PREF_LAST_APP_COLLECTION_TIME)
                     .apply()
-                    
-                // Reset historical count
-                val histPrefs = getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
-                histPrefs.edit().clear().apply()
+
+                // Remove the cloud-total cache written by older versions
+                getSharedPreferences("historical_counts", Context.MODE_PRIVATE).edit().clear().apply()
 
                 // Refresh UI
                 updateStats()
@@ -334,16 +340,9 @@ class MainActivity : AppCompatActivity() {
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
                 
-                val prefs = getSharedPreferences("historical_counts", Context.MODE_PRIVATE)
-                val historicUsage = prefs.getInt("historic_usage_count", 0)
-                val historicAppUsage = prefs.getInt("historic_app_usage_count", 0)
-
-                // If historic is bigger than local, use historic. Else just use local
-                val displayUsage = maxOf(count, historicUsage)
-                val displayAppUsage = maxOf(appCount, historicAppUsage)
-
-                recordCountText.text = "%,d".format(displayUsage)
-                appRecordCountText.text = "%,d".format(displayAppUsage)
+                // Records currently stored on this phone only (not the cloud total)
+                recordCountText.text = "%,d".format(count)
+                appRecordCountText.text = "%,d".format(appCount)
                 
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {

@@ -28,6 +28,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -97,6 +99,11 @@ class DataCollectionService : Service() {
 
     // Coroutine scope for database operations (IO dispatcher)
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // One tick at a time: two overlapping ticks would read the same counter
+    // baseline / per-app checkpoint and count the same bytes twice
+    private val collectMutex = Mutex()
+    private val appCollectMutex = Mutex()
 
     // Date formatters (reused to avoid repeated allocation)
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
@@ -241,7 +248,15 @@ class DataCollectionService : Service() {
             }
         }
 
-        cm.registerDefaultNetworkCallback(callback)
+        // registerDefaultNetworkCallback is API 24+; minSdk is 23
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            cm.registerDefaultNetworkCallback(callback)
+        } else {
+            val request = android.net.NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            cm.registerNetworkCallback(request, callback)
+        }
         networkCallback = callback
     }
 
@@ -282,108 +297,113 @@ class DataCollectionService : Service() {
      */
     private fun collectData() {
         serviceScope.launch {
-            try {
-                val dao = AppDatabase.getInstance(this@DataCollectionService).usageDao()
+            collectMutex.withLock {
+                try {
+                    val dao = AppDatabase.getInstance(this@DataCollectionService).usageDao()
 
-                // ── 1. Get usage delta from TrafficStats ──
-                val delta = trafficHelper.getUsageDelta()
+                    // ── 1. Get usage delta from TrafficStats ──
+                    val delta = trafficHelper.getUsageDelta()
 
-                // ── 2. Save cumulative values for reboot recovery ──
-                prefs.edit()
-                    .putLong(PREF_LAST_CUMULATIVE_RX, trafficHelper.getCurrentCumulativeRx())
-                    .putLong(PREF_LAST_CUMULATIVE_TX, trafficHelper.getCurrentCumulativeTx())
-                    .apply()
+                    // ── 2. Read device state ──
+                    val batteryLevel = deviceHelper.getBatteryLevel()
+                    val screenOn = deviceHelper.isScreenOn()
+                    val networkType = deviceHelper.getNetworkType()
+                    val signalStrength = deviceHelper.getSignalStrength()
+                    val charging = deviceHelper.isCharging()
+                    val deviceModel = deviceHelper.getDeviceModel()
+                    val deviceId = deviceIdManager.getDeviceId()
 
-                // ── 3. Read device state ──
-                val batteryLevel = deviceHelper.getBatteryLevel()
-                val screenOn = deviceHelper.isScreenOn()
-                val networkType = deviceHelper.getNetworkType()
-                val signalStrength = deviceHelper.getSignalStrength()
-                val charging = deviceHelper.isCharging()
-                val deviceModel = deviceHelper.getDeviceModel()
-                val deviceId = deviceIdManager.getDeviceId()
+                    // ── 4. Compute temporal features ──
+                    val now = Calendar.getInstance()
+                    val timestamp = now.timeInMillis
+                    val datetimeStr = isoFormat.format(now.time)
+                    val dateStr = dateOnlyFormat.format(now.time)
+                    val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(timestamp) / 60000
+                    val networkOperator = deviceHelper.getNetworkProvider()
+                    val hour = now.get(Calendar.HOUR_OF_DAY)
+                    val minute = now.get(Calendar.MINUTE)
 
-                // ── 4. Compute temporal features ──
-                val now = Calendar.getInstance()
-                val timestamp = now.timeInMillis
-                val datetimeStr = isoFormat.format(now.time)
-                val dateStr = dateOnlyFormat.format(now.time)
-                val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(timestamp) / 60000
-                val networkOperator = deviceHelper.getNetworkProvider()
-                val hour = now.get(Calendar.HOUR_OF_DAY)
-                val minute = now.get(Calendar.MINUTE)
+                    // Convert Calendar day (Sun=1..Sat=7) to ISO day (Mon=1..Sun=7)
+                    val dayOfWeek = run {
+                        val calDay = now.get(Calendar.DAY_OF_WEEK)
+                        if (calDay == Calendar.SUNDAY) 7 else calDay - 1
+                    }
+                    val isWeekend = if (dayOfWeek >= 6) 1 else 0
 
-                // Convert Calendar day (Sun=1..Sat=7) to ISO day (Mon=1..Sun=7)
-                val dayOfWeek = run {
-                    val calDay = now.get(Calendar.DAY_OF_WEEK)
-                    if (calDay == Calendar.SUNDAY) 7 else calDay - 1
-                }
-                val isWeekend = if (dayOfWeek >= 6) 1 else 0
+                    val timePeriod = when (hour) {
+                        in 5..11 -> "Morning"
+                        in 12..16 -> "Afternoon"
+                        in 17..20 -> "Evening"
+                        else -> "Night"
+                    }
 
-                val timePeriod = when (hour) {
-                    in 5..11 -> "Morning"
-                    in 12..16 -> "Afternoon"
-                    in 17..20 -> "Evening"
-                    else -> "Night"
-                }
+                    // ── 5. Compute cumulative MB today from Room ──
+                    val mbUsedThisTick = delta.bytesTotal / 1048576.0
+                    val cumulativeMbToday = dao.getTodaySum(dateStr) + mbUsedThisTick
 
-                // ── 5. Compute cumulative MB today from Room ──
-                val mbUsedThisTick = delta.bytesTotal / 1048576.0
-                val cumulativeMbToday = dao.getTodaySum(dateStr) + mbUsedThisTick
-
-                // ── 6. Build and insert the record ──
-                val record = UsageRecord(
-                    timestamp = timestamp,
-                    datetimeStr = datetimeStr,
-                    hour = hour,
-                    minute = minute,
-                    dayOfWeek = dayOfWeek,
-                    isWeekend = isWeekend,
-                    timePeriod = timePeriod,
-                    bytesRx = delta.bytesRx,
-                    bytesTx = delta.bytesTx,
-                    bytesTotal = delta.bytesTotal,
-                    mbUsed = mbUsedThisTick,
-                    cumulativeMbToday = cumulativeMbToday,
-                    networkType = networkType,
-                    screenOn = if (screenOn) 1 else 0,
-                    batteryLevel = batteryLevel,
-                    deviceId = deviceId,
-                    signalStrength = signalStrength,
-                    isCharging = if (charging) 1 else 0,
-                    deviceModel = deviceModel,
-                    networkOperator = networkOperator,
-                    utcOffsetMinutes = utcOffsetMinutes
-                )
-
-                dao.insert(record)
-
-                // ── 7. Update notification with current stats ──
-                val count = dao.getCount()
-                val appCount = AppDatabase.getInstance(this@DataCollectionService)
-                    .appUsageDao().getCount()
-                val runtime = formatElapsedTime(System.currentTimeMillis() - startTimeMs)
-                updateNotification(
-                    "$count records | Apps: $appCount | Today: ${"%.1f".format(cumulativeMbToday)} MB | $runtime"
-                )
-
-                // Log for debugging
-                if (delta.wasReboot) {
-                    Log.i(TAG, "Record #$count inserted (reboot detected, delta=0)")
-                } else {
-                    Log.i(
-                        TAG,
-                        "Record #$count: +${"%.3f".format(mbUsedThisTick)} MB " +
-                        "(${delta.bytesTotal} bytes) | Signal: ${signalStrength}dBm | " +
-                        "Charging: $charging | Today: ${"%.1f".format(cumulativeMbToday)} MB"
+                    // ── 6. Build and insert the record ──
+                    val record = UsageRecord(
+                        timestamp = timestamp,
+                        datetimeStr = datetimeStr,
+                        hour = hour,
+                        minute = minute,
+                        dayOfWeek = dayOfWeek,
+                        isWeekend = isWeekend,
+                        timePeriod = timePeriod,
+                        bytesRx = delta.bytesRx,
+                        bytesTx = delta.bytesTx,
+                        bytesTotal = delta.bytesTotal,
+                        mbUsed = mbUsedThisTick,
+                        cumulativeMbToday = cumulativeMbToday,
+                        networkType = networkType,
+                        screenOn = if (screenOn) 1 else 0,
+                        batteryLevel = batteryLevel,
+                        deviceId = deviceId,
+                        signalStrength = signalStrength,
+                        isCharging = if (charging) 1 else 0,
+                        deviceModel = deviceModel,
+                        networkOperator = networkOperator,
+                        utcOffsetMinutes = utcOffsetMinutes
                     )
-                }
 
-            } catch (e: SecurityException) {
-                Log.e(TAG, "Permission error — stopping service", e)
-                stopSelf()
-            } catch (e: Exception) {
-                Log.e(TAG, "Collection tick failed — skipping this interval", e)
+                    dao.insert(record)
+
+                    // Advance the baseline only now that the row is saved; if the insert
+                    // threw, the next tick still counts these bytes. Then persist it for
+                    // reboot recovery.
+                    trafficHelper.commit(delta)
+                    prefs.edit()
+                        .putLong(PREF_LAST_CUMULATIVE_RX, trafficHelper.getCurrentCumulativeRx())
+                        .putLong(PREF_LAST_CUMULATIVE_TX, trafficHelper.getCurrentCumulativeTx())
+                        .apply()
+
+                    // ── 7. Update notification with current stats ──
+                    val count = dao.getCount()
+                    val appCount = AppDatabase.getInstance(this@DataCollectionService)
+                        .appUsageDao().getCount()
+                    val runtime = formatElapsedTime(System.currentTimeMillis() - startTimeMs)
+                    updateNotification(
+                        "$count records | Apps: $appCount | Today: ${"%.1f".format(cumulativeMbToday)} MB | $runtime"
+                    )
+
+                    // Log for debugging
+                    if (delta.wasReboot) {
+                        Log.i(TAG, "Record #$count inserted (reboot detected, delta=0)")
+                    } else {
+                        Log.i(
+                            TAG,
+                            "Record #$count: +${"%.3f".format(mbUsedThisTick)} MB " +
+                            "(${delta.bytesTotal} bytes) | Signal: ${signalStrength}dBm | " +
+                            "Charging: $charging | Today: ${"%.1f".format(cumulativeMbToday)} MB"
+                        )
+                    }
+
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "Permission error — stopping service", e)
+                    stopSelf()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Collection tick failed — bytes carry over to the next tick", e)
+                }
             }
         }
     }
@@ -401,67 +421,77 @@ class DataCollectionService : Service() {
      */
     private fun collectAppData() {
         serviceScope.launch {
-            try {
-                if (!networkStatsHelper.hasUsageAccessPermission()) {
-                    Log.w(TAG, "Per-app collection skipped — Usage Access not granted")
-                    return@launch
-                }
+            appCollectMutex.withLock {
+                try {
+                    if (!networkStatsHelper.hasUsageAccessPermission()) {
+                        Log.w(TAG, "Per-app collection skipped — Usage Access not granted")
+                        return@withLock
+                    }
 
-                val now = System.currentTimeMillis()
-                val lastCollectionTime = prefs.getLong(
-                    PREF_LAST_APP_COLLECTION_TIME,
-                    now - APP_COLLECTION_INTERVAL_MS // Default: look back one interval
-                )
-
-                // Query per-app usage since last collection
-                val snapshots = networkStatsHelper.queryAppUsage(lastCollectionTime, now)
-
-                if (snapshots.isEmpty()) {
-                    Log.d(TAG, "Per-app collection: no usage data in interval")
-                    prefs.edit().putLong(PREF_LAST_APP_COLLECTION_TIME, now).apply()
-                    return@launch
-                }
-
-                // Build records with query_start for the collection window
-                val datetimeStr = isoFormat.format(now)
-                val queryStartStr = isoFormat.format(java.util.Date(lastCollectionTime))
-                val deviceId = deviceIdManager.getDeviceId()
-                val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(now) / 60000
-
-                val records = snapshots.map { snapshot ->
-                    AppUsageRecord(
-                        timestamp = now,
-                        datetimeStr = datetimeStr,
-                        deviceId = deviceId,
-                        packageName = snapshot.packageName,
-                        appName = snapshot.appName,
-                        uid = snapshot.uid,
-                        bytesRx = snapshot.bytesRx,
-                        bytesTx = snapshot.bytesTx,
-                        bytesTotal = snapshot.bytesTotal,
-                        networkType = snapshot.networkType,
-                        queryStart = queryStartStr,
-                        startTime = queryStartStr,
-                        endTime = datetimeStr,
-                        isSystemApp = if (snapshot.isSystemApp) 1 else 0,
-                        utcOffsetMinutes = utcOffsetMinutes
+                    val now = System.currentTimeMillis()
+                    val lastCollectionTime = prefs.getLong(
+                        PREF_LAST_APP_COLLECTION_TIME,
+                        now - APP_COLLECTION_INTERVAL_MS // Default: look back one interval
                     )
+
+                    // Query per-app usage since last collection
+                    val result = networkStatsHelper.queryAppUsage(lastCollectionTime, now)
+
+                    // A failed query is not "no usage": keep the checkpoint so the
+                    // next tick retries this window instead of skipping it
+                    if (result.failed) {
+                        Log.w(TAG, "Per-app query failed — window kept for retry")
+                        return@withLock
+                    }
+                    val snapshots = result.snapshots
+
+                    if (snapshots.isEmpty()) {
+                        Log.d(TAG, "Per-app collection: no usage data in interval")
+                        prefs.edit().putLong(PREF_LAST_APP_COLLECTION_TIME, now).apply()
+                        return@withLock
+                    }
+
+                    // Build records with query_start for the collection window
+                    val datetimeStr = isoFormat.format(now)
+                    val queryStartStr = isoFormat.format(java.util.Date(lastCollectionTime))
+                    val deviceId = deviceIdManager.getDeviceId()
+                    val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(now) / 60000
+
+                    val records = snapshots.map { snapshot ->
+                        AppUsageRecord(
+                            timestamp = now,
+                            datetimeStr = datetimeStr,
+                            deviceId = deviceId,
+                            packageName = snapshot.packageName,
+                            appName = snapshot.appName,
+                            uid = snapshot.uid,
+                            bytesRx = snapshot.bytesRx,
+                            bytesTx = snapshot.bytesTx,
+                            bytesTotal = snapshot.bytesTotal,
+                            networkType = snapshot.networkType,
+                            queryStart = queryStartStr,
+                            startTime = queryStartStr,
+                            endTime = datetimeStr,
+                            isSystemApp = if (snapshot.isSystemApp) 1 else 0,
+                            utcOffsetMinutes = utcOffsetMinutes
+                        )
+                    }
+
+                    // Batch insert
+                    val dao = AppDatabase.getInstance(this@DataCollectionService).appUsageDao()
+                    dao.insertAll(records)
+
+                    // Advance the checkpoint only after the rows are saved
+                    prefs.edit().putLong(PREF_LAST_APP_COLLECTION_TIME, now).apply()
+
+                    Log.i(TAG, "Per-app collection: inserted ${records.size} app records " +
+                            "(${records.count { it.isSystemApp == 1 }} system, " +
+                            "${records.count { it.isSystemApp == 0 }} user) " +
+                            "[window: $queryStartStr → $datetimeStr]")
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Per-app collection tick failed — window kept for retry", e)
                 }
-
-                // Batch insert
-                val dao = AppDatabase.getInstance(this@DataCollectionService).appUsageDao()
-                dao.insertAll(records)
-
-                // Save collection timestamp
-                prefs.edit().putLong(PREF_LAST_APP_COLLECTION_TIME, now).apply()
-
-                Log.i(TAG, "Per-app collection: inserted ${records.size} app records " +
-                        "(${records.count { it.isSystemApp == 1 }} system, " +
-                        "${records.count { it.isSystemApp == 0 }} user) " +
-                        "[window: $queryStartStr → $datetimeStr]")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Per-app collection tick failed — skipping", e)
             }
         }
     }

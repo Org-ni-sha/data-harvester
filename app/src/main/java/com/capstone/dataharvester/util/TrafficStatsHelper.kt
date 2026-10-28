@@ -14,8 +14,9 @@ import android.util.Log
  *
  * Usage:
  *   1. Call initializeFromSavedState() on service start (reboot recovery)
- *   2. Call getUsageDelta() every 2 minutes to get interval bytes
- *   3. Call getCurrentCumulativeRx/Tx() to save state for reboot recovery
+ *   2. Call getUsageDelta() every tick to get interval bytes
+ *   3. After the record is saved, call commit(delta), then save
+ *      getCurrentCumulativeRx/Tx() for reboot recovery
  */
 class TrafficStatsHelper {
 
@@ -37,7 +38,10 @@ class TrafficStatsHelper {
         /** Total bytes (rx + tx) */
         val bytesTotal: Long,
         /** True if a reboot was detected (delta forced to 0) */
-        val wasReboot: Boolean
+        val wasReboot: Boolean,
+        /** Counter readings this delta ends at; pass to [commit] once the row is saved */
+        val currentRx: Long = -1L,
+        val currentTx: Long = -1L
     )
 
     /**
@@ -56,7 +60,10 @@ class TrafficStatsHelper {
 
     /**
      * Read current TrafficStats mobile byte counters and compute the delta
-     * since the last call. Handles reboot detection automatically.
+     * since the last committed baseline. Handles reboot detection automatically.
+     *
+     * Does NOT move the baseline: call [commit] after the record is saved, so a
+     * failed database insert leaves those bytes to be counted by the next tick.
      *
      * @return UsageDelta containing interval bytes and reboot flag
      */
@@ -102,18 +109,23 @@ class TrafficStatsHelper {
             }
         }
 
-        // Save current as baseline for next call
-        lastRxBytes = currentRx
-        lastTxBytes = currentTx
-
         Log.d(TAG, "Delta: RX=$deltaRx, TX=$deltaTx, Total=${deltaRx + deltaTx}")
 
         return UsageDelta(
             bytesRx = deltaRx,
             bytesTx = deltaTx,
             bytesTotal = deltaRx + deltaTx,
-            wasReboot = wasReboot
+            wasReboot = wasReboot,
+            currentRx = currentRx,
+            currentTx = currentTx
         )
+    }
+
+    /** Make [delta]'s readings the baseline for the next [getUsageDelta]. */
+    fun commit(delta: UsageDelta) {
+        if (delta.currentRx < 0 || delta.currentTx < 0) return
+        lastRxBytes = delta.currentRx
+        lastTxBytes = delta.currentTx
     }
 
     /** Get the current cumulative RX bytes (for saving to SharedPreferences). */

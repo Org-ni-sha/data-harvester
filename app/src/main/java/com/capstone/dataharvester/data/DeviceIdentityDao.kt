@@ -10,8 +10,8 @@ interface DeviceIdentityDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(deviceIdentity: DeviceIdentity)
 
-    @Query("SELECT * FROM device_identity WHERE hardware_id = :hardwareId ORDER BY linked_at DESC LIMIT 1")
-    suspend fun getLatestByHardwareId(hardwareId: String): DeviceIdentity?
+    @Query("SELECT * FROM device_identity WHERE current_device_id = :deviceId ORDER BY linked_at DESC LIMIT 1")
+    suspend fun getLatestByDeviceId(deviceId: String): DeviceIdentity?
     
     @Query("SELECT * FROM device_identity WHERE is_synced = 0")
     suspend fun getAllUnsynced(): List<DeviceIdentity> // For cloud sync

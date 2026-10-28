@@ -128,7 +128,7 @@ class DeviceInfoHelper(private val context: Context) {
     /**
      * Get the current signal strength in dBm.
      *
-     * Uses TelephonyManager.getSignalStrength() on API 28+.
+     * Uses TelephonyManager.getSignalStrength() on API 29+.
      * Falls back to CellInfo-based reading on older APIs.
      * Returns -999 if unable to read signal strength.
      */
@@ -136,8 +136,10 @@ class DeviceInfoHelper(private val context: Context) {
         return try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // API 28+: Use getSignalStrength() directly
+            // getCellSignalStrengths() is API 29+; Android 9 (API 28) uses the
+            // CellInfo path below like older versions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // API 29+: Use getSignalStrength() directly
                 val signalStrength = tm.signalStrength
                 if (signalStrength != null) {
                     // getLevel() returns 0-4, but we want dBm for richer data
@@ -152,7 +154,7 @@ class DeviceInfoHelper(private val context: Context) {
                     -999
                 }
             } else {
-                // API 23-27: Try to get from CellInfo
+                // API 23-28: Try to get from CellInfo
                 @Suppress("MissingPermission")
                 val cellInfoList = tm.allCellInfo
                 if (cellInfoList != null && cellInfoList.isNotEmpty()) {

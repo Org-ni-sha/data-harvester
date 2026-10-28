@@ -13,6 +13,7 @@ import com.capstone.dataharvester.data.UsageRecord
 import java.io.File
 import java.io.OutputStream
 import java.io.PrintWriter
+import java.util.Locale
 
 /**
  * Exports usage records from Room database to CSV files in the Downloads folder.
@@ -283,8 +284,9 @@ class CsvExporter(private val context: Context) {
             r.bytesRx.toString(),
             r.bytesTx.toString(),
             r.bytesTotal.toString(),
-            "%.6f".format(r.mbUsed),
-            "%.6f".format(r.cumulativeMbToday),
+            // Locale.US: a comma decimal separator would split the column
+            "%.6f".format(Locale.US, r.mbUsed),
+            "%.6f".format(Locale.US, r.cumulativeMbToday),
             quote(r.networkType),
             r.screenOn.toString(),
             r.batteryLevel.toString(),

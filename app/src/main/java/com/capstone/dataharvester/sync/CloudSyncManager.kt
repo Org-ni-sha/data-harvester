@@ -23,7 +23,8 @@ class CloudSyncManager(private val context: Context) {
     // Your SQLite Cloud configurations loaded from .env via BuildConfig
     private val gatewayUrl = com.capstone.dataharvester.BuildConfig.GATEWAY_URL
     private val apiKey = com.capstone.dataharvester.BuildConfig.API_KEY
-    private val dbName = com.capstone.dataharvester.BuildConfig.DB_NAME 
+    private val dbName = com.capstone.dataharvester.BuildConfig.DB_NAME
+    private val appVersion = com.capstone.dataharvester.BuildConfig.VERSION_NAME
     
     private fun sqlStr(value: String?): String {
         if (value == null) return "NULL"
@@ -38,7 +39,6 @@ class CloudSyncManager(private val context: Context) {
         val usageDao = db.usageDao()
         val appUsageDao = db.appUsageDao()
         val deviceIdentityDao = db.deviceIdentityDao()
-        val promoRecordDao = db.promoRecordDao()
         
         var totalUsageSynced = 0
         var totalAppUsageSynced = 0
@@ -57,10 +57,9 @@ class CloudSyncManager(private val context: Context) {
                 break
             }
             if (unsyncedUsage.isEmpty() && unsyncedAppUsage.isEmpty() && isFirstBatch) {
-                // If it's the first batch and it's empty, we should still check if there are identities/promos to sync
+                // If it's the first batch and it's empty, we should still check if there are identities to sync
                 val unsyncedIdentity = deviceIdentityDao.getAllUnsynced()
-                val unsyncedPromos = promoRecordDao.getAllUnsynced()
-                if (unsyncedIdentity.isEmpty() && unsyncedPromos.isEmpty()) {
+                if (unsyncedIdentity.isEmpty()) {
                     return SyncResult.Success(0, 0)
                 }
             }
@@ -70,8 +69,8 @@ class CloudSyncManager(private val context: Context) {
             
             // Add usage records
             unsyncedUsage.forEach { record ->
-                sqlBuilder.append("INSERT OR IGNORE INTO usage_records (timestamp, datetime_str, hour, minute, day_of_week, is_weekend, time_period, bytes_rx, bytes_tx, bytes_total, mb_used, cumulative_mb_today, network_type, screen_on, battery_level, device_id, signal_strength, is_charging, device_model, network_operator, utc_offset_minutes) ")
-                sqlBuilder.append("VALUES (${record.timestamp}, ${sqlStr(record.datetimeStr)}, ${record.hour}, ${record.minute}, ${record.dayOfWeek}, ${record.isWeekend}, ${sqlStr(record.timePeriod)}, ${record.bytesRx}, ${record.bytesTx}, ${record.bytesTotal}, ${record.mbUsed}, ${record.cumulativeMbToday}, ${sqlStr(record.networkType)}, ${record.screenOn}, ${record.batteryLevel}, ${sqlStr(record.deviceId)}, ${record.signalStrength}, ${record.isCharging}, ${sqlStr(record.deviceModel)}, ${sqlStr(record.networkOperator)}, ${record.utcOffsetMinutes});\n")
+                sqlBuilder.append("INSERT OR IGNORE INTO usage_records (local_id, timestamp, datetime_str, hour, minute, day_of_week, is_weekend, time_period, bytes_rx, bytes_tx, bytes_total, mb_used, cumulative_mb_today, network_type, screen_on, battery_level, device_id, signal_strength, is_charging, device_model, network_operator, utc_offset_minutes) ")
+                sqlBuilder.append("VALUES (${record.id}, ${record.timestamp}, ${sqlStr(record.datetimeStr)}, ${record.hour}, ${record.minute}, ${record.dayOfWeek}, ${record.isWeekend}, ${sqlStr(record.timePeriod)}, ${record.bytesRx}, ${record.bytesTx}, ${record.bytesTotal}, ${record.mbUsed}, ${record.cumulativeMbToday}, ${sqlStr(record.networkType)}, ${record.screenOn}, ${record.batteryLevel}, ${sqlStr(record.deviceId)}, ${record.signalStrength}, ${record.isCharging}, ${sqlStr(record.deviceModel)}, ${sqlStr(record.networkOperator)}, ${record.utcOffsetMinutes});\n")
             }
             
             // Add app usage records
@@ -81,20 +80,13 @@ class CloudSyncManager(private val context: Context) {
             }
             
             var unsyncedIdentity = emptyList<com.capstone.dataharvester.data.DeviceIdentity>()
-            var unsyncedPromos = emptyList<com.capstone.dataharvester.data.PromoRecord>()
             if (isFirstBatch) {
                 unsyncedIdentity = deviceIdentityDao.getAllUnsynced()
+                // One cloud row per install, keyed by the install UUID; no hardware ID is sent
                 unsyncedIdentity.forEach { record ->
-                    val prevDeviceStr = if (record.previous_device_id != null) sqlStr(record.previous_device_id) else "NULL"
-                    sqlBuilder.append("INSERT INTO device_identity (current_device_id, previous_device_id, hardware_id, device_model, network_provider, linked_at) ")
-                    sqlBuilder.append("VALUES (${sqlStr(record.current_device_id)}, $prevDeviceStr, ${sqlStr(record.hardware_id)}, ${sqlStr(record.device_model)}, ${sqlStr(record.network_provider)}, ${record.linked_at}) ")
-                    sqlBuilder.append("ON CONFLICT(hardware_id) DO UPDATE SET previous_device_id = CASE WHEN current_device_id != excluded.current_device_id THEN current_device_id ELSE previous_device_id END, current_device_id = excluded.current_device_id, device_model = excluded.device_model, network_provider = excluded.network_provider, linked_at = excluded.linked_at;\n")
-                }
-                unsyncedPromos = promoRecordDao.getAllUnsynced()
-                unsyncedPromos.forEach { record ->
-                    sqlBuilder.append("INSERT INTO promo_records (local_id, device_id, promo_name, promo_price, promo_duration, promo_data_allowance, custom_data_allowance, has_unlimited_data, sms_allocation, call_allocation, provider, start_date, expiry_date, created_at, status) ")
-                    sqlBuilder.append("VALUES (${record.id}, ${sqlStr(record.device_id)}, ${sqlStr(record.promo_name)}, ${record.promo_price}, ${record.promo_duration}, ${record.promo_data_allowance}, ${record.custom_data_allowance}, ${record.has_unlimited_data}, ${sqlStr(record.sms_allocation)}, ${sqlStr(record.call_allocation)}, ${sqlStr(record.provider)}, ${sqlStr(record.start_date)}, ${sqlStr(record.expiry_date)}, ${record.created_at}, ${sqlStr(record.status)}) ")
-                    sqlBuilder.append("ON CONFLICT(device_id, local_id) DO UPDATE SET promo_name = excluded.promo_name, promo_price = excluded.promo_price, promo_duration = excluded.promo_duration, promo_data_allowance = excluded.promo_data_allowance, custom_data_allowance = excluded.custom_data_allowance, has_unlimited_data = excluded.has_unlimited_data, sms_allocation = excluded.sms_allocation, call_allocation = excluded.call_allocation, provider = excluded.provider, start_date = excluded.start_date, expiry_date = excluded.expiry_date, created_at = excluded.created_at, status = excluded.status;\n")
+                    sqlBuilder.append("INSERT INTO device_identity (device_id, device_model, network_provider, app_version, linked_at) ")
+                    sqlBuilder.append("VALUES (${sqlStr(record.current_device_id)}, ${sqlStr(record.device_model)}, ${sqlStr(record.network_provider)}, ${sqlStr(appVersion)}, ${record.linked_at}) ")
+                    sqlBuilder.append("ON CONFLICT(device_id) DO UPDATE SET device_model = excluded.device_model, network_provider = excluded.network_provider, app_version = excluded.app_version, linked_at = excluded.linked_at;\n")
                 }
             }
             
@@ -110,8 +102,8 @@ class CloudSyncManager(private val context: Context) {
             val payloadSizeBytes = sqlBuilder.toString().toByteArray(Charsets.UTF_8).size
             val payloadSizeKb = payloadSizeBytes / 1024.0
             
-            sqlBuilder.append("INSERT INTO upload_history (device_id, uploaded_timestamp, datetime_str, datetime_stamp, records_uploaded, payload_size_bytes, payload_size_kb) ")
-            sqlBuilder.append("VALUES (${sqlStr(deviceId)}, $uploadTime, ${sqlStr(datetimeStr)}, ${sqlStr(datetimeStamp)}, $totalSynced, $payloadSizeBytes, $payloadSizeKb);\n")
+            sqlBuilder.append("INSERT INTO upload_history (device_id, uploaded_timestamp, datetime_str, datetime_stamp, records_uploaded, payload_size_bytes, payload_size_kb, app_version) ")
+            sqlBuilder.append("VALUES (${sqlStr(deviceId)}, $uploadTime, ${sqlStr(datetimeStr)}, ${sqlStr(datetimeStamp)}, $totalSynced, $payloadSizeBytes, $payloadSizeKb, ${sqlStr(appVersion)});\n")
             
             val jsonBody = org.json.JSONObject()
             jsonBody.put("database", dbName)
@@ -146,11 +138,6 @@ class CloudSyncManager(private val context: Context) {
                                     deviceIdentityDao.markAsSynced(chunk)
                                 }
                             }
-                            if (isFirstBatch && unsyncedPromos.isNotEmpty()) {
-                                unsyncedPromos.map { it.id }.chunked(500).forEach { chunk ->
-                                    promoRecordDao.markAsSynced(chunk)
-                                }
-                            }
                         }
                         
                         totalUsageSynced += unsyncedUsage.size
@@ -168,58 +155,6 @@ class CloudSyncManager(private val context: Context) {
             }
         }
         
-        // Fetch historical counts after all batches succeed
-        fetchHistoricalCount()
-        
         return SyncResult.Success(totalUsageSynced, totalAppUsageSynced)
-    }
-    
-    private suspend fun fetchHistoricalCount() {
-        val deviceIdManager = com.capstone.dataharvester.util.DeviceIdManager(context)
-        val deviceModel = deviceIdManager.getDeviceModel()
-        
-        // Sum up all records that match this exact device_model, regardless of their device_id or hardware_id
-        val sql = "SELECT (SELECT COUNT(*) FROM usage_records WHERE device_model = ${sqlStr(deviceModel)}) as usage_count, (SELECT COUNT(*) FROM app_usage_records WHERE device_id IN (SELECT DISTINCT device_id FROM usage_records WHERE device_model = ${sqlStr(deviceModel)})) as app_count;"
-        
-        val jsonBody = org.json.JSONObject()
-        jsonBody.put("database", dbName)
-        jsonBody.put("sql", sql)
-        
-        val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
-            .url(gatewayUrl)
-            .post(requestBody)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Accept", "application/json")
-            .build()
-            
-        try {
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val responseStr = response.body?.string()
-                    android.util.Log.i("SyncManager", "Historical count response: $responseStr")
-                    if (responseStr != null) {
-                        val json = org.json.JSONObject(responseStr)
-                        val dataArray = json.optJSONArray("data")
-                        if (dataArray != null && dataArray.length() > 0) {
-                            val row = dataArray.getJSONObject(0)
-                            val usageCount = row.optInt("usage_count", 0)
-                            val appCount = row.optInt("app_count", 0)
-                            
-                            val prefs = context.getSharedPreferences("historical_counts", android.content.Context.MODE_PRIVATE)
-                            prefs.edit()
-                                .putInt("historic_usage_count", usageCount)
-                                .putInt("historic_app_usage_count", appCount)
-                                .apply()
-                            android.util.Log.i("SyncManager", "Saved historical counts: $usageCount, $appCount")
-                        }
-                    }
-                } else {
-                    android.util.Log.e("SyncManager", "Failed to fetch historical count: Code ${response.code} - ${response.body?.string()}")
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("SyncManager", "Failed to fetch historical count", e)
-        }
     }
 }

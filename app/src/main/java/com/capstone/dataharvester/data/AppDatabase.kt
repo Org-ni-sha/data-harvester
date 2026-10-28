@@ -24,10 +24,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v7: Internal sync architecture upgrades (empty placeholder)
  *  - v8: Added device_identity and promo_record tables for new features
  *  - v9: Added network_operator, utc_offset_minutes, and synced promo_records
+ *  - v10: Replaced the stored ANDROID_ID in device_identity.hardware_id with the install UUID;
+ *         repairs is_synced on installs upgraded from v1-v8; dropped promo_records (unused)
  */
 @Database(
-    entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class, PromoRecord::class],
-    version = 9,
+    entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class],
+    version = 10,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,7 +37,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun usageDao(): UsageDao
     abstract fun appUsageDao(): AppUsageDao
     abstract fun deviceIdentityDao(): DeviceIdentityDao
-    abstract fun promoRecordDao(): PromoRecordDao
 
     companion object {
         @Volatile
@@ -219,6 +220,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** ALTER TABLE ADD COLUMN fails if the column exists, so check first. */
+        private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, definition: String) {
+            db.query("PRAGMA table_info($table)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) return
+                }
+            }
+            db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+        }
+
+        /**
+         * Migration from v9 to v10:
+         * - Stops storing the hardware ANDROID_ID: hardware_id now holds the random install
+         *   UUID (current_device_id). Rows are marked unsynced so the cloud copy is replaced.
+         * - Adds is_synced to usage_records / app_usage_records when missing. No earlier
+         *   migration added it, so installs upgraded from v1-v8 failed Room validation.
+         * - Drops promo_records: the study no longer collects promos.
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("UPDATE device_identity SET hardware_id = current_device_id, is_synced = 0")
+                addColumnIfMissing(db, "usage_records", "is_synced", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "app_usage_records", "is_synced", "INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("DROP TABLE IF EXISTS promo_records")
+            }
+        }
+
         /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.
@@ -238,7 +267,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
-                        MIGRATION_8_9
+                        MIGRATION_8_9,
+                        MIGRATION_9_10
                     )
                     .build()
                     .also { INSTANCE = it }
