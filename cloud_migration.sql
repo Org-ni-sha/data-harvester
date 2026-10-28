@@ -3,7 +3,9 @@
 --
 -- STATUS: already applied to production. Verified against sqlite_master on
 -- 2026-10-05: all columns and unique indexes below exist, and there are 0
--- duplicate (device_id, timestamp) rows. Kept here so the schema can be
+-- duplicate (device_id, timestamp) rows. Corrected 2026-10-12: the per-app
+-- (device_id, package_name, timestamp) dedupe and index were wrong and have been
+-- removed here and from production (see step 4). Kept here so the schema can be
 -- rebuilt and so the next change follows the same order.
 --
 -- ORDER MATTERS: CloudSyncManager sends each batch as ONE SQL request. If the
@@ -62,9 +64,10 @@ CREATE INDEX IF NOT EXISTS index_promo_records_device_id ON promo_records(device
 DELETE FROM usage_records
 WHERE id NOT IN (SELECT MIN(id) FROM usage_records GROUP BY device_id, timestamp);
 
-DELETE FROM app_usage_records
-WHERE id NOT IN (SELECT MIN(id) FROM app_usage_records GROUP BY device_id, package_name, timestamp);
-
+-- app_usage_records is NOT deduplicated on (device_id, package_name, timestamp):
+-- each collection tick writes a MOBILE and a WIFI row (and can return several
+-- buckets per app) with the same timestamp, so those are real rows. Doing that
+-- on 2026-10-05 deleted 17,228 real rows. Only (device_id, local_id) is a duplicate.
 DELETE FROM app_usage_records
 WHERE local_id IS NOT NULL
   AND id NOT IN (SELECT MIN(id) FROM app_usage_records WHERE local_id IS NOT NULL GROUP BY device_id, local_id);
@@ -81,9 +84,9 @@ WHERE id NOT IN (SELECT MAX(id) FROM device_identity GROUP BY hardware_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_records_unique
 ON usage_records(device_id, timestamp);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_app_usage_records_unique
-ON app_usage_records(device_id, package_name, timestamp);
-
+-- No unique index on app_usage_records(device_id, package_name, timestamp): it made
+-- INSERT OR IGNORE drop the second network's row on every sync. It was dropped
+-- from production on 2026-10-12. Re-uploads are caught by the local_id index below.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_usage_records_device_local
 ON app_usage_records(device_id, local_id);
 
