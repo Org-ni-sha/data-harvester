@@ -26,9 +26,9 @@ import com.capstone.dataharvester.util.NetworkStatsHelper
  *  1. POST_NOTIFICATIONS (Android 13+ runtime permission)
  *  2. READ_PHONE_STATE (runtime permission for signal strength)
  *  3. PACKAGE_USAGE_STATS (special — must be granted in Settings)
- *  4. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (special — must be granted in Settings)
+ *  4. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (recommended, not required — see allPermissionsGranted)
  *
- * Once all granted, the "GET STARTED" button becomes active and navigates
+ * Once 1-3 are granted, the "GET STARTED" button becomes active and navigates
  * to MainActivity. The completion state is saved so subsequent launches
  * skip this screen (unless a permission is revoked).
  */
@@ -118,11 +118,16 @@ class OnboardingActivity : AppCompatActivity() {
         return powerManager.isIgnoringBatteryOptimizations(packageName)
     }
 
+    /**
+     * Battery optimization is recommended but not required: on Realme/Oppo/Vivo/Xiaomi
+     * the system request opens the OEM's own "background usage" switch, which apps
+     * cannot read, so isIgnoringBatteryOptimizations() can stay false even after the
+     * user allows it. Requiring it would leave those users stuck on this screen.
+     */
     private fun allPermissionsGranted(): Boolean {
         return isNotificationPermissionGranted() &&
                 isPhoneStatePermissionGranted() &&
-                isUsageAccessGranted() &&
-                isBatteryOptimizationIgnored()
+                isUsageAccessGranted()
     }
 
     // ─── Permission Requests ──────────────────────────────────────────────
@@ -202,7 +207,22 @@ class OnboardingActivity : AppCompatActivity() {
     private fun requestBatteryOptimization() {
         if (isBatteryOptimizationIgnored()) return
 
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val askedBefore = prefs.getBoolean("asked_battery", false)
+        prefs.edit().putBoolean("asked_battery", true).apply()
+
         try {
+            if (askedBefore) {
+                // The direct request didn't take (common on OEM skins): open the full
+                // list, where the app can be set to "Don't optimize" / "Allow"
+                Toast.makeText(
+                    this,
+                    "Find \"Data Harvester\" and set it to Don't optimize",
+                    Toast.LENGTH_LONG
+                ).show()
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                return
+            }
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             intent.data = Uri.parse("package:$packageName")
             startActivity(intent)
@@ -260,12 +280,13 @@ class OnboardingActivity : AppCompatActivity() {
             batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.status_active))
             batteryStatus.isClickable = false
         } else {
-            batteryStatus.text = grantAction
+            // Optional (see allPermissionsGranted), so it doesn't block Get Started
+            batteryStatus.text = "RECOMMENDED"
             batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
             batteryStatus.isClickable = true
         }
 
-        // Get Started button — only enabled when all granted
+        // Get Started button — only enabled when the required permissions are granted
         getStartedButton.isEnabled = allPermissionsGranted()
         if (allPermissionsGranted()) {
             getStartedButton.alpha = 1.0f
