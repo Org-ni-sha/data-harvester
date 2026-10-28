@@ -19,6 +19,7 @@ import android.util.Log
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.data.AppUsageRecord
 import com.capstone.dataharvester.data.UsageRecord
+import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.DeviceIdManager
 import com.capstone.dataharvester.util.DeviceInfoHelper
 import com.capstone.dataharvester.util.NetworkStatsHelper
@@ -154,6 +155,15 @@ class DataCollectionService : Service() {
         // Start as a foreground service with a persistent notification
         val notification = buildNotification("Starting data collection...")
         startForeground(NOTIFICATION_ID, notification)
+
+        // No collection without consent (e.g. a boot restart after consent was withdrawn).
+        // startForeground above must still run first, or Android kills the app.
+        if (!ConsentManager(this).isAccepted()) {
+            Log.w(TAG, "Consent not given — not collecting")
+            prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // Record start time for runtime display
         startTimeMs = System.currentTimeMillis()
