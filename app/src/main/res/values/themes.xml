@@ -9,5 +9,60 @@
         <item name="android:windowBackground">@color/dark_bg</item>
         <item name="android:statusBarColor">@color/dark_bg</item>
         <item name="android:navigationBarColor">@color/dark_bg</item>
+        <!-- Every MaterialAlertDialogBuilder dialog (see ui/Dialogs.kt) uses this look -->
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.DataHarvester.Dialog</item>
+    </style>
+
+    <!--
+        Dialogs: blue rounded panel (drawable/bg_dialog), white title, soft blue-white
+        body, filled accent-blue primary button like the dashboard buttons, and a strongly
+        dimmed screen behind (blurred too on Android 12+, see values-v31).
+    -->
+    <style name="ThemeOverlay.DataHarvester.Dialog.Base" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="colorPrimary">@color/accent_blue</item>
+        <item name="colorAccent">@color/accent_blue</item>
+        <item name="colorSurface">@color/dialog_surface_bottom</item>
+        <item name="colorOnSurface">@color/white</item>
+        <item name="colorControlActivated">@color/accent_blue</item>
+        <item name="colorControlNormal">@color/dialog_secondary_button</item>
+        <item name="android:textColorPrimary">@color/white</item>
+        <item name="android:textColorSecondary">@color/dialog_body</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.72</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/DataHarvester.Dialog.Title</item>
+        <item name="materialAlertDialogBodyTextStyle">@style/DataHarvester.Dialog.Body</item>
+        <item name="buttonBarPositiveButtonStyle">@style/DataHarvester.Dialog.PrimaryButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/DataHarvester.Dialog.SecondaryButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/DataHarvester.Dialog.SecondaryButton</item>
+    </style>
+
+    <!-- Below Android 12 there is no window blur; values-v31 adds it on top of this -->
+    <style name="ThemeOverlay.DataHarvester.Dialog" parent="ThemeOverlay.DataHarvester.Dialog.Base" />
+
+    <style name="DataHarvester.Dialog.Title" parent="MaterialAlertDialog.MaterialComponents.Title.Text">
+        <item name="android:textColor">@color/white</item>
+        <item name="android:textSize">19sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="DataHarvester.Dialog.Body" parent="MaterialAlertDialog.MaterialComponents.Body.Text">
+        <item name="android:textColor">@color/dialog_body</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+    </style>
+
+    <!-- Same shape and weight as the dashboard buttons, sized for a dialog -->
+    <style name="DataHarvester.Dialog.PrimaryButton" parent="Widget.MaterialComponents.Button.UnelevatedButton">
+        <item name="backgroundTint">@color/accent_blue</item>
+        <item name="android:textColor">@color/white</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:minHeight">44dp</item>
+        <item name="android:layout_marginStart">8dp</item>
+    </style>
+
+    <style name="DataHarvester.Dialog.SecondaryButton" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/dialog_secondary_button</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:minHeight">44dp</item>
     </style>
 </resources>

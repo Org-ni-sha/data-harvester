@@ -2,19 +2,27 @@ package com.capstone.dataharvester
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.room.withTransaction
 import com.capstone.dataharvester.data.AppDatabase
+import com.capstone.dataharvester.data.CollectionLocks
+import com.capstone.dataharvester.ui.Dialogs
+import com.capstone.dataharvester.ui.Dialogs.withDangerButton
+import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
+import com.capstone.dataharvester.util.DeviceInfoHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,11 +31,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.capstone.dataharvester.sync.CloudSyncManager
+import com.capstone.dataharvester.sync.SyncResult
 import com.capstone.dataharvester.sync.SyncWorker
 import com.capstone.dataharvester.update.UpdateManager
 import androidx.work.Constraints
@@ -35,6 +45,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.await
 import java.util.concurrent.TimeUnit
 
 /**
@@ -46,12 +57,17 @@ import java.util.concurrent.TimeUnit
  *  - Stats grid: record counts, today's usage, last record time
  *  - Start / Stop collection (side by side)
  *  - Export All CSV (both main + per-app, fixed filenames, overwrite)
- *  - Reset Data (confirmation dialog, clears both tables)
+ *  - Reset Data (optional upload first, then confirmation; clears this phone's tables only)
  *
  * Auto-refreshes stats every 10 seconds.
  * All permission handling is done in OnboardingActivity.
  */
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** Unique name of the periodic upload; Reset cancels and re-enqueues it */
+        const val SYNC_WORK_NAME = "CloudSQLiteSync"
+    }
 
     // Views
     private lateinit var statusDot: View
@@ -62,6 +78,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lastRecordText: TextView
     private lateinit var deviceIdText: TextView
     private lateinit var deviceModelText: TextView
+    private lateinit var networkProviderText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var uploadButton: Button
@@ -77,6 +94,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // The dashboard can also be opened from the collection notification, so
+        // check consent here too: without it, send the user back to onboarding
+        if (!ConsentManager(this).isAccepted()) {
+            Toast.makeText(this, R.string.consent_required, Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this, OnboardingActivity::class.java))
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_main)
 
         // Initialize helpers
@@ -91,6 +118,7 @@ class MainActivity : AppCompatActivity() {
         lastRecordText = findViewById(R.id.lastRecordText)
         deviceIdText = findViewById(R.id.deviceIdText)
         deviceModelText = findViewById(R.id.deviceModelText)
+        networkProviderText = findViewById(R.id.networkProviderText)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)  
         uploadButton = findViewById(R.id.uploadButton)
@@ -100,8 +128,36 @@ class MainActivity : AppCompatActivity() {
         // Make the status dot circular
         applyCircleDot()
 
-        // Display device identity
-        displayDeviceInfo()
+        // Display device identity and get network provider
+        val currentNetworkProvider = displayDeviceInfo()
+        
+        // Register device identity in database.
+        // No hardware identifier (ANDROID_ID) is read: the hardware_id column is kept only so
+        // the cloud's ON CONFLICT(hardware_id) upsert still works, and holds the random
+        // install UUID instead.
+        mainScope.launch {
+            val currentDeviceId = deviceIdManager.getDeviceId()
+            val deviceModel = deviceIdManager.getDeviceModel()
+
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val dao = db.deviceIdentityDao()
+
+            val existing = withContext(Dispatchers.IO) { dao.getLatestByDeviceId(currentDeviceId) }
+            if (existing == null || existing.network_provider != currentNetworkProvider || existing.device_model != deviceModel) {
+                withContext(Dispatchers.IO) {
+                    dao.insert(
+                        com.capstone.dataharvester.data.DeviceIdentity(
+                            current_device_id = currentDeviceId,
+                            previous_device_id = null,
+                            hardware_id = currentDeviceId,
+                            device_model = deviceModel,
+                            network_provider = currentNetworkProvider,
+                            linked_at = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
 
         // Button click listeners
         startButton.setOnClickListener { startCollection() }
@@ -138,12 +194,18 @@ class MainActivity : AppCompatActivity() {
 
     // ─── Device Info Display ──────────────────────────────────────────────
 
-    private fun displayDeviceInfo() {
+    private fun displayDeviceInfo(): String {
         val deviceId = deviceIdManager.getDeviceId()
         val deviceModel = deviceIdManager.getDeviceModel()
 
         deviceIdText.text = "ID: $deviceId"
         deviceModelText.text = "Model: $deviceModel"
+        
+        val deviceHelper = DeviceInfoHelper(this)
+        val networkProvider = deviceHelper.getNetworkProvider()
+
+        networkProviderText.text = "Provider: $networkProvider"
+        return networkProvider
     }
 
     // ─── Collection Control ────────────────────────────────────────────────
@@ -213,59 +275,160 @@ class MainActivity : AppCompatActivity() {
 
     // ─── Reset Data ────────────────────────────────────────────────────────
 
+    /**
+     * Step 1 of Reset: offer to upload pending records first. Closing this dialog
+     * (back, tap outside) cancels the reset. Skipped when nothing is pending.
+     * Reset only deletes data on this phone; the cloud databases are never touched.
+     */
     private fun confirmReset() {
         mainScope.launch {
             val db = AppDatabase.getInstance(this@MainActivity)
-            val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
-            val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
+            val pending = withContext(Dispatchers.IO) {
+                db.usageDao().countUnsynced() + db.appUsageDao().countUnsynced()
+            }
+            if (pending == 0) {
+                showResetConfirmation(uploadError = null)
+                return@launch
+            }
 
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("⚠️ Reset All Data?")
+            Dialogs.builder(this@MainActivity)
+                .setTitle("Upload before resetting?")
                 .setMessage(
-                    "This will permanently delete all collected records:\n\n" +
-                    "• $mainCount usage records\n" +
-                    "• $appCount per-app records\n\n" +
-                    "This action cannot be undone."
+                    "%,d records have not been uploaded to the cloud yet.\n\n".format(pending) +
+                    "Upload them first so they are not lost?"
                 )
-                .setPositiveButton("RESET") { _, _ -> performReset() }
-                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("UPLOAD FIRST") { _, _ -> uploadThenConfirmReset() }
+                .setNegativeButton("SKIP UPLOAD") { _, _ -> showResetConfirmation(uploadError = null) }
+                .setCancelable(true)
                 .show()
         }
     }
 
-    private fun performReset() {
+    /** Upload pending records, then always continue to the reset confirmation. */
+    private fun uploadThenConfirmReset() {
+        val progress = Dialogs.progress(
+            this,
+            "Uploading…",
+            "Sending the records that are not uploaded yet to the cloud."
+        )
+
+        mainScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                if (!ConsentManager(this@MainActivity).isAccepted()) {
+                    SyncResult.Failure("Consent not given")
+                } else {
+                    CloudSyncManager(this@MainActivity).syncPendingData()
+                }
+            }
+            progress.dismiss()
+            updateStats()
+            showResetConfirmation(uploadError = (result as? SyncResult.Failure)?.reason)
+        }
+    }
+
+    /**
+     * Step 2 of Reset: always shown, whichever choice was made in step 1. States how
+     * many records are still not uploaded (those are lost) and lets the user also
+     * delete the exported CSV files, which are kept by default as a recovery copy.
+     */
+    private fun showResetConfirmation(uploadError: String?) {
+        mainScope.launch {
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
+            val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
+            val pending = withContext(Dispatchers.IO) {
+                db.usageDao().countUnsynced() + db.appUsageDao().countUnsynced()
+            }
+
+            val deleteExports = CheckBox(this@MainActivity).apply {
+                text = "Also delete exported CSV files"
+                isChecked = false
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.dialog_body))
+                buttonTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(
+                        ContextCompat.getColor(this@MainActivity, R.color.accent_blue),
+                        ContextCompat.getColor(this@MainActivity, R.color.dialog_secondary_button)
+                    )
+                )
+            }
+            val container = FrameLayout(this@MainActivity).apply {
+                val pad = (20 * resources.displayMetrics.density).toInt()
+                setPadding(pad, 0, pad, 0)
+                addView(deleteExports)
+            }
+
+            Dialogs.builder(this@MainActivity)
+                .setTitle("⚠️ Reset All Data?")
+                .setMessage(buildString {
+                    append("This will permanently delete the records stored on this phone:\n\n")
+                    append("• %,d usage records\n".format(mainCount))
+                    append("• %,d per-app records\n".format(appCount))
+                    if (uploadError != null) append("\nUpload failed: $uploadError\n")
+                    if (pending > 0) {
+                        append("\n⚠ %,d records are NOT uploaded and will be lost.\n".format(pending))
+                    } else {
+                        append("\nAll records are uploaded; the cloud copy is not affected.\n")
+                    }
+                    append("\nThis action cannot be undone.")
+                })
+                .setView(container)
+                .setPositiveButton("RESET") { _, _ -> performReset(deleteExports.isChecked) }
+                .setNegativeButton("CANCEL", null)
+                .setCancelable(true)
+                .show()
+                .withDangerButton()
+        }
+    }
+
+    private fun performReset(deleteExports: Boolean) {
         mainScope.launch {
             try {
-                // Stop collection first if running
+                // Stop collection and uploads first
                 stopService(Intent(this@MainActivity, DataCollectionService::class.java))
                 updateStatusUI(isCollecting = false)
+                WorkManager.getInstance(this@MainActivity).cancelUniqueWork(SYNC_WORK_NAME).await()
 
                 val db = AppDatabase.getInstance(this@MainActivity)
 
                 withContext(Dispatchers.IO) {
-                    // Clear both tables
-                    db.usageDao().deleteAll()
-                    db.appUsageDao().deleteAll()
+                    // Wait for an upload or a collector tick that is still running
+                    CloudSyncManager.syncMutex.withLock {
+                        CollectionLocks.db.withLock {
+                            db.withTransaction {
+                                db.usageDao().deleteAll()
+                                db.appUsageDao().deleteAll()
+                                // Checkpoints too, so the next run starts a fresh baseline
+                                db.checkpointDao().clear()
+                                db.appUsageBaselineDao().clear()
+                            }
+                        }
+                    }
 
-                    // Delete stale CSV files from Downloads
-                    CsvExporter(this@MainActivity).deleteExportedFiles()
+                    // Exported CSVs are a recovery copy: only deleted when asked
+                    if (deleteExports) CsvExporter(this@MainActivity).deleteExportedFiles()
                 }
 
-                // Reset TrafficStats baselines in SharedPreferences
-                val prefs = getSharedPreferences(
-                    DataCollectionService.PREFS_NAME,
-                    Context.MODE_PRIVATE
-                )
-                prefs.edit()
+                getSharedPreferences(DataCollectionService.PREFS_NAME, Context.MODE_PRIVATE).edit()
                     .putBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+                    // Pre-v11 checkpoint keys, in case the collector never ran on this version
+                    .remove(DataCollectionService.PREF_LAST_CUMULATIVE_RX)
+                    .remove(DataCollectionService.PREF_LAST_CUMULATIVE_TX)
+                    .remove(DataCollectionService.PREF_LAST_APP_COLLECTION_TIME)
                     .apply()
+
+                // Remove the cloud-total cache written by older versions
+                getSharedPreferences("historical_counts", Context.MODE_PRIVATE).edit().clear().apply()
+
+                // Re-enqueue the periodic upload cancelled above
+                setupCloudSync()
 
                 // Refresh UI
                 updateStats()
 
                 Toast.makeText(
                     this@MainActivity,
-                    "All data has been reset",
+                    "All data on this phone has been reset",
                     Toast.LENGTH_SHORT
                 ).show()
 
@@ -294,9 +457,11 @@ class MainActivity : AppCompatActivity() {
 
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
-
+                
+                // Records currently stored on this phone only (not the cloud total)
                 recordCountText.text = "%,d".format(count)
                 appRecordCountText.text = "%,d".format(appCount)
+                
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {
                     last.datetimeStr.substringAfter("T").substringBefore(".")
@@ -351,6 +516,13 @@ class MainActivity : AppCompatActivity() {
         )
         val isCollecting = prefs.getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
         updateStatusUI(isCollecting)
+
+        // Collection should be running but Android may not have let it restart in the
+        // background (e.g. after a reboot): restart it now, from the foreground.
+        // Starting an already running service is harmless.
+        if (isCollecting) {
+            ContextCompat.startForegroundService(this, Intent(this, DataCollectionService::class.java))
+        }
     }
 
     private fun startAutoRefresh() {
@@ -364,41 +536,57 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCloudSync() {
-        // Only sync when device is connected to the internet
+        // Only sync when device is connected to any network (WiFi or Mobile Data)
         val syncConstraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        // Schedule to run daily (every 24 hours)
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(24, TimeUnit.HOURS)
+        // Schedule to run every 1 hour. Automated upload
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, TimeUnit.HOURS)
             .setConstraints(syncConstraints)
+            .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
             .build()
 
-        // Queue the work. UPDATE ensures that the new daily interval is applied if already scheduled.
+        // Queue the work. UPDATE ensures that the new interval is applied if already scheduled.
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "CloudSQLiteSync",
+            SYNC_WORK_NAME,
             ExistingPeriodicWorkPolicy.UPDATE,
             syncRequest
         )
     }
     
     private fun syncToCloud() {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        
+        if (capabilities == null || !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+            Toast.makeText(this@MainActivity, "Please connect to the internet to upload.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         uploadButton.isEnabled = false
         uploadButton.text = "Uploading..."
         
         mainScope.launch {
             val syncManager = CloudSyncManager(this@MainActivity)
-            val resultCount = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 syncManager.syncPendingData()
             }
             
-            if (resultCount > 0) {
-                Toast.makeText(this@MainActivity, "Uploaded $resultCount records successfully!", Toast.LENGTH_SHORT).show()
-                updateStats() // Update the stats count on screen
-            } else if (resultCount == 0) {
-                Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this@MainActivity, "Upload failed! Check internet connection and logs.", Toast.LENGTH_LONG).show()
+            when (result) {
+                is com.capstone.dataharvester.sync.SyncResult.Success -> {
+                    val totalSynced = result.usage + result.app
+                    if (totalSynced > 0) {
+                        Toast.makeText(this@MainActivity, "Uploaded %,d (%,d usage, %,d app usage) records successfully!".format(totalSynced, result.usage, result.app), Toast.LENGTH_SHORT).show()
+                        updateStats() // Update the stats count on screen
+                    } else {
+                        Toast.makeText(this@MainActivity, "No new unsynced records to upload.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is com.capstone.dataharvester.sync.SyncResult.Failure -> {
+                    Toast.makeText(this@MainActivity, "Upload failed! ${result.reason}. Please try again. Check internet connection and logs.", Toast.LENGTH_LONG).show()
+                }
             }
             
             uploadButton.isEnabled = true

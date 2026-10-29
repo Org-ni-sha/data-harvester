@@ -1,7 +1,5 @@
 package com.capstone.dataharvester.update
 
-import android.app.AlertDialog
-import android.app.ProgressDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -12,6 +10,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.capstone.dataharvester.BuildConfig
+import com.capstone.dataharvester.ui.Dialogs
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -21,8 +20,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import android.widget.Toast
-import com.capstone.dataharvester.BuildConfig
 
 class UpdateManager(private val context: Context) {
 
@@ -188,7 +185,7 @@ class UpdateManager(private val context: Context) {
     }
 
     private fun showUpdateDialog(newVersionName: String, apkUrl: String) {
-        AlertDialog.Builder(context)
+        Dialogs.builder(context)
             .setTitle("Update Available")
             .setMessage("A new version ($newVersionName) is available. Would you like to update?")
             .setPositiveButton("Update") { _, _ ->
@@ -200,15 +197,11 @@ class UpdateManager(private val context: Context) {
     }
 
     private fun downloadAndInstallApk(apkUrl: String) {
-        @Suppress("DEPRECATION")
-        val progressDialog = ProgressDialog(context).apply {
-            setTitle("Downloading Update")
-            setMessage("Please wait...")
-            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
-            max = 100
-            setCancelable(false)
-            show()
-        }
+        val progressDialog = Dialogs.progress(
+            context,
+            "Downloading Update",
+            "Downloading the new version. Please keep the app open."
+        )
 
         val request = Request.Builder().url(apkUrl).build()
         client.newCall(request).enqueue(object : Callback {
@@ -216,7 +209,7 @@ class UpdateManager(private val context: Context) {
                 Log.e(TAG, "Failed to download APK", e)
                 mainHandler.post {
                     progressDialog.dismiss()
-                    AlertDialog.Builder(context)
+                    Dialogs.builder(context)
                         .setTitle("Download Failed")
                         .setMessage("Could not download the update. Please check your internet connection.")
                         .setPositiveButton("OK", null)
@@ -247,7 +240,7 @@ class UpdateManager(private val context: Context) {
                         if (totalBytes > 0) {
                             val progress = ((totalRead * 100) / totalBytes).toInt()
                             mainHandler.post {
-                                progressDialog.progress = progress
+                                progressDialog.setProgress(progress)
                             }
                         }
                     }

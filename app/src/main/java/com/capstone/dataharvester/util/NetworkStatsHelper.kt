@@ -12,41 +12,46 @@ import android.util.Log
 /**
  * Wrapper around Android's NetworkStatsManager API for per-app data usage collection.
  *
- * Queries cumulative per-UID network usage for both mobile and Wi-Fi networks,
- * resolves UIDs to package names and app labels, and identifies system vs user apps.
+ * Android keeps per-UID history in buckets about 2 hours long, so it cannot answer
+ * "how much did app X use in these 10 minutes" exactly: depending on the version it
+ * interpolates (smearing usage and under-counting the bucket in progress) or returns
+ * whole buckets only. This helper therefore never queries short windows. It returns
+ * CUMULATIVE usage per UID since an anchor on a bucket boundary (UTC midnight), with
+ * an end time in the future so the in-progress bucket counts in full. The collector
+ * subtracts consecutive readings, exactly like it does for TrafficStats.
+ *
+ * Resolves UIDs to package names and app labels, and identifies system vs user apps.
  *
  * Requires:
  *  - android.permission.PACKAGE_USAGE_STATS (granted via Settings → Usage Access)
  *
  * Usage:
  *   1. Check hasUsageAccessPermission() before querying
- *   2. Call queryAppUsage(startTime, endTime) to get per-app snapshots
+ *   2. Call queryCumulative(transport, anchor, now) for each transport
+ *   3. Subtract the previous reading; resolveApp(uid) for names
  */
 class NetworkStatsHelper(private val context: Context) {
 
     companion object {
         private const val TAG = "NetworkStatsHelper"
+        const val DAY_MS = 86_400_000L
 
-        /**
-         * Maximum number of apps to track per collection interval.
-         * Only the top N apps by total bytes consumed are kept.
-         * This prevents the dataset from exploding with hundreds of
-         * low-usage system processes.
-         */
-        const val TOP_N_APPS = 20
+        /** UTC midnight at or before [time]: a multiple of every NetworkStats bucket length. */
+        // Kotlin's mod, not Math.floorMod(long, long): that is API 24 and minSdk is 23
+        fun utcMidnight(time: Long): Long = time - time.mod(DAY_MS)
     }
 
-    /**
-     * Snapshot of a single app's network usage for a given interval and network type.
-     */
-    data class AppUsageSnapshot(
-        val uid: Int,
+    /** Network a per-app reading covers; queried separately so one can fail alone. */
+    @Suppress("DEPRECATION") // querySummary still takes the legacy ConnectivityManager types
+    enum class Transport(val legacyType: Int) {
+        MOBILE(ConnectivityManager.TYPE_MOBILE),
+        WIFI(ConnectivityManager.TYPE_WIFI)
+    }
+
+    /** App identity resolved from a UID. */
+    data class AppInfo(
         val packageName: String,
         val appName: String,
-        val bytesRx: Long,
-        val bytesTx: Long,
-        val bytesTotal: Long,
-        val networkType: String,  // "MOBILE" or "WIFI"
         val isSystemApp: Boolean
     )
 
@@ -80,123 +85,79 @@ class NetworkStatsHelper(private val context: Context) {
     }
 
     /**
-     * Query per-app network usage for a given time range.
-     * Returns snapshots for both MOBILE and WIFI networks.
+     * Cumulative usage per UID on [transport] from [anchor] up to [until].
      *
-     * Only apps with non-zero usage during the interval are included.
+     * [anchor] must be a UTC midnight (see [utcMidnight]) so no partial bucket is cut
+     * at the start. Pass `until = now + DAY_MS` to include everything recorded so far
+     * in the bucket in progress, or `until = anchor + DAY_MS` to close a past day.
      *
-     * @param startTime Start of interval in epoch millis
-     * @param endTime End of interval in epoch millis
-     * @return List of per-app usage snapshots, empty if permission not granted
+     * Android can return several buckets per UID (e.g. foreground/background); they
+     * are summed. Every UID with non-zero usage is kept.
+     *
+     * @return uid → [rx, tx], or null if the query failed (the caller keeps its
+     *   previous reading and retries next tick)
      */
-    fun queryAppUsage(startTime: Long, endTime: Long): List<AppUsageSnapshot> {
+    @Suppress("DEPRECATION")
+    fun queryCumulative(transport: Transport, anchor: Long, until: Long): Map<Int, LongArray>? {
         if (!hasUsageAccessPermission()) {
             Log.w(TAG, "Usage access permission not granted — skipping per-app collection")
-            return emptyList()
+            return null
         }
-
         val statsManager = context.getSystemService(Context.NETWORK_STATS_SERVICE)
             as? NetworkStatsManager
         if (statsManager == null) {
             Log.e(TAG, "NetworkStatsManager not available")
-            return emptyList()
+            return null
         }
 
-        val allSnapshots = mutableListOf<AppUsageSnapshot>()
-
-        // Query MOBILE network
-        allSnapshots.addAll(
-            queryForNetwork(statsManager, ConnectivityManager.TYPE_MOBILE, startTime, endTime, "MOBILE")
-        )
-
-        // Query WIFI network
-        allSnapshots.addAll(
-            queryForNetwork(statsManager, ConnectivityManager.TYPE_WIFI, startTime, endTime, "WIFI")
-        )
-
-        // ── Filter to top N apps by total bytes (aggregated across network types) ──
-        val topUids = allSnapshots
-            .groupBy { it.uid }
-            .mapValues { (_, snapshots) -> snapshots.sumOf { it.bytesTotal } }
-            .entries
-            .sortedByDescending { it.value }
-            .take(TOP_N_APPS)
-            .map { it.key }
-            .toSet()
-
-        val results = allSnapshots.filter { it.uid in topUids }
-
-        Log.i(TAG, "Collected ${results.size} per-app entries (top $TOP_N_APPS of " +
-                "${allSnapshots.groupBy { it.uid }.size} apps) — " +
-                "${results.count { it.networkType == "MOBILE" }} mobile, " +
-                "${results.count { it.networkType == "WIFI" }} wifi")
-
-        return results
-    }
-
-    /**
-     * Query usage for a specific network type (mobile or wifi).
-     */
-    @Suppress("DEPRECATION")
-    private fun queryForNetwork(
-        statsManager: NetworkStatsManager,
-        networkType: Int,
-        startTime: Long,
-        endTime: Long,
-        networkLabel: String
-    ): List<AppUsageSnapshot> {
-        val snapshots = mutableListOf<AppUsageSnapshot>()
+        // uid -> (rx, tx), summed over all buckets for that UID
+        val totals = linkedMapOf<Int, LongArray>()
 
         try {
             val networkStats: NetworkStats = statsManager.querySummary(
-                networkType,
+                transport.legacyType,
                 null,  // subscriberId — null queries all
-                startTime,
-                endTime
+                anchor,
+                until
             )
 
             val bucket = NetworkStats.Bucket()
 
-            while (networkStats.hasNextBucket()) {
-                networkStats.getNextBucket(bucket)
+            networkStats.use {
+                while (it.hasNextBucket()) {
+                    it.getNextBucket(bucket)
 
-                val uid = bucket.uid
-                val rxBytes = bucket.rxBytes
-                val txBytes = bucket.txBytes
+                    val uid = bucket.uid
 
-                // Skip entries with zero usage
-                if (rxBytes == 0L && txBytes == 0L) continue
+                    // Skip entries with zero usage
+                    if (bucket.rxBytes == 0L && bucket.txBytes == 0L) continue
 
-                // Skip removed apps (UID_REMOVED) and tethering (UID_TETHERING)
-                if (uid == NetworkStats.Bucket.UID_REMOVED ||
-                    uid == NetworkStats.Bucket.UID_TETHERING
-                ) continue
+                    // Skip removed apps (UID_REMOVED) and tethering (UID_TETHERING)
+                    if (uid == NetworkStats.Bucket.UID_REMOVED ||
+                        uid == NetworkStats.Bucket.UID_TETHERING
+                    ) continue
 
-                val appInfo = resolveUid(uid)
-
-                snapshots.add(
-                    AppUsageSnapshot(
-                        uid = uid,
-                        packageName = appInfo.packageName,
-                        appName = appInfo.appName,
-                        bytesRx = rxBytes,
-                        bytesTx = txBytes,
-                        bytesTotal = rxBytes + txBytes,
-                        networkType = networkLabel,
-                        isSystemApp = appInfo.isSystemApp
-                    )
-                )
+                    val sum = totals.getOrPut(uid) { LongArray(2) }
+                    sum[0] += bucket.rxBytes
+                    sum[1] += bucket.txBytes
+                }
             }
 
-            networkStats.close()
-
         } catch (e: SecurityException) {
-            Log.e(TAG, "SecurityException querying $networkLabel stats — permission revoked?", e)
+            Log.e(TAG, "SecurityException querying ${transport.name} stats — permission revoked?", e)
+            return null
         } catch (e: Exception) {
-            Log.e(TAG, "Error querying $networkLabel network stats", e)
+            Log.e(TAG, "Error querying ${transport.name} network stats", e)
+            return null
         }
 
-        return snapshots
+        Log.d(TAG, "${transport.name}: cumulative usage for ${totals.size} UIDs since $anchor")
+        return totals
+    }
+
+    /** Resolve a UID to its package, label and system flag. */
+    fun resolveApp(uid: Int): AppInfo = resolveUid(uid).let {
+        AppInfo(it.packageName, it.appName, it.isSystemApp)
     }
 
     /**

@@ -9,12 +9,15 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.NetworkStatsHelper
+import com.capstone.dataharvester.ui.Dialogs
 
 /**
  * Onboarding / permission gate screen.
@@ -26,9 +29,13 @@ import com.capstone.dataharvester.util.NetworkStatsHelper
  *  1. POST_NOTIFICATIONS (Android 13+ runtime permission)
  *  2. READ_PHONE_STATE (runtime permission for signal strength)
  *  3. PACKAGE_USAGE_STATS (special — must be granted in Settings)
+ *  4. REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (special — must be granted in Settings)
  *
- * Once all granted, the "GET STARTED" button becomes active and navigates
- * to MainActivity. The completion state is saved so subsequent launches
+ * The user must also accept the Terms and Consent Form (RA 10173), stored by
+ * ConsentManager. Without it the app cannot reach MainActivity, collect, or upload.
+ *
+ * Once all granted and consent is given, the "GET STARTED" button becomes active and
+ * navigates to MainActivity. The completion state is saved so subsequent launches
  * skip this screen (unless a permission is revoked).
  */
 class OnboardingActivity : AppCompatActivity() {
@@ -42,16 +49,22 @@ class OnboardingActivity : AppCompatActivity() {
     private lateinit var notifStatus: TextView
     private lateinit var phoneStatus: TextView
     private lateinit var usageStatus: TextView
+    private lateinit var batteryStatus: TextView
+    private lateinit var consentCheckBox: CheckBox
+    private lateinit var consentText: TextView
     private lateinit var getStartedButton: Button
     private lateinit var networkStatsHelper: NetworkStatsHelper
+    private lateinit var consentManager: ConsentManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         networkStatsHelper = NetworkStatsHelper(this)
+        consentManager = ConsentManager(this)
 
-        // If onboarding was completed and all permissions still granted, skip to dashboard
-        if (isOnboardingComplete() && allPermissionsGranted()) {
+        // If onboarding was completed, consent given and all permissions still granted,
+        // skip to dashboard
+        if (isOnboardingComplete() && canGetStarted()) {
             navigateToDashboard()
             return
         }
@@ -62,15 +75,54 @@ class OnboardingActivity : AppCompatActivity() {
         notifStatus = findViewById(R.id.notifStatus)
         phoneStatus = findViewById(R.id.phoneStatus)
         usageStatus = findViewById(R.id.usageStatus)
+        batteryStatus = findViewById(R.id.batteryStatus)
+        consentCheckBox = findViewById(R.id.consentCheckBox)
+        consentText = findViewById(R.id.consentText)
         getStartedButton = findViewById(R.id.getStartedButton)
 
         // Click handlers for each permission row
         notifStatus.setOnClickListener { requestNotificationPermission() }
         phoneStatus.setOnClickListener { requestPhoneStatePermission() }
         usageStatus.setOnClickListener { openUsageAccessSettings() }
+        batteryStatus.setOnClickListener { requestBatteryOptimization() }
+
+        // Consent: "I have read and agree to the <Terms and Consent Form>"
+        val label = getString(R.string.consent_checkbox_label)
+        val link = getString(R.string.consent_link_text)
+        consentText.text = android.text.SpannableString(label).apply {
+            val start = label.indexOf(link)
+            if (start >= 0) {
+                setSpan(android.text.style.UnderlineSpan(), start, start + link.length, 0)
+                setSpan(
+                    android.text.style.ForegroundColorSpan(
+                        ContextCompat.getColor(this@OnboardingActivity, R.color.accent_blue)
+                    ),
+                    start, start + link.length, 0
+                )
+            }
+        }
+        consentText.setOnClickListener { showConsentDialog() }
+        consentCheckBox.isChecked = consentManager.isAccepted()
+        consentCheckBox.setOnClickListener {
+            if (consentCheckBox.isChecked) {
+                // Ticking only counts after reading the form: show it and let I AGREE tick it
+                consentCheckBox.isChecked = false
+                showConsentDialog()
+            } else {
+                withdrawConsent()
+            }
+        }
 
         // Get Started button
         getStartedButton.setOnClickListener {
+            // Re-check at tap time: the button state can lag behind Settings changes
+            if (!canGetStarted()) {
+                if (!consentManager.isAccepted()) {
+                    Toast.makeText(this, R.string.consent_required, Toast.LENGTH_SHORT).show()
+                }
+                updatePermissionUI()
+                return@setOnClickListener
+            }
             markOnboardingComplete()
             navigateToDashboard()
         }
@@ -109,10 +161,42 @@ class OnboardingActivity : AppCompatActivity() {
         return networkStatsHelper.hasUsageAccessPermission()
     }
 
+    private fun isBatteryOptimizationIgnored(): Boolean {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
     private fun allPermissionsGranted(): Boolean {
         return isNotificationPermissionGranted() &&
                 isPhoneStatePermissionGranted() &&
-                isUsageAccessGranted()
+                isUsageAccessGranted() &&
+                isBatteryOptimizationIgnored()
+    }
+
+    private fun canGetStarted(): Boolean = allPermissionsGranted() && consentManager.isAccepted()
+
+    // ─── Terms and Consent ────────────────────────────────────────────────
+
+    private fun showConsentDialog() {
+        Dialogs.builder(this)
+            .setTitle(R.string.consent_title)
+            .setMessage(getText(R.string.consent_body))
+            .setPositiveButton(R.string.consent_agree) { _, _ -> acceptConsent() }
+            .setNegativeButton(R.string.consent_close, null)
+            .show()
+    }
+
+    private fun acceptConsent() {
+        consentManager.accept()
+        consentCheckBox.isChecked = true
+        updatePermissionUI()
+    }
+
+    private fun withdrawConsent() {
+        consentManager.withdraw()
+        // No collection without consent
+        stopService(Intent(this, DataCollectionService::class.java))
+        updatePermissionUI()
     }
 
     // ─── Permission Requests ──────────────────────────────────────────────
@@ -189,6 +273,44 @@ class OnboardingActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Some phones (Realme/Oppo on Android 15, for example) skip the system popup and
+     * open the app's "App battery usage" page instead. There, the "Allow background
+     * usage" switch alone keeps the app "Optimized"; only choosing "Unrestricted"
+     * (tap the words, not the switch) exempts it, which is what this screen checks.
+     * So explain that before opening it.
+     */
+    private fun requestBatteryOptimization() {
+        if (isBatteryOptimizationIgnored()) return
+
+        Dialogs.builder(this)
+            .setTitle("Allow unrestricted battery use")
+            .setMessage(
+                "If a popup asks to let Data Harvester always run in the background, tap Allow.\n\n" +
+                "If a battery page opens instead, tap the words \"Allow background usage\" " +
+                "(not only the switch) and choose \"Unrestricted\".\n\n" +
+                "If you see a list of apps, find Data Harvester and choose " +
+                "\"Don't optimize\" or \"Allow\"."
+            )
+            .setPositiveButton("OPEN SETTINGS") { _, _ -> openBatterySettings() }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
+    private fun openBatterySettings() {
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (ex: Exception) {
+                Toast.makeText(this, "Could not open Battery Settings", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // ─── UI Updates ───────────────────────────────────────────────────────
 
     private fun updatePermissionUI() {
@@ -228,9 +350,23 @@ class OnboardingActivity : AppCompatActivity() {
             usageStatus.isClickable = true
         }
 
-        // Get Started button — only enabled when all granted
-        getStartedButton.isEnabled = allPermissionsGranted()
-        if (allPermissionsGranted()) {
+        // Battery Optimization
+        if (isBatteryOptimizationIgnored()) {
+            batteryStatus.text = granted
+            batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.status_active))
+            batteryStatus.isClickable = false
+        } else {
+            batteryStatus.text = grantAction
+            batteryStatus.setTextColor(ContextCompat.getColor(this, R.color.accent_blue))
+            batteryStatus.isClickable = true
+        }
+
+        // Consent checkbox mirrors the saved acceptance
+        consentCheckBox.isChecked = consentManager.isAccepted()
+
+        // Get Started button — only enabled when all granted and consent is given
+        getStartedButton.isEnabled = canGetStarted()
+        if (canGetStarted()) {
             getStartedButton.alpha = 1.0f
         } else {
             getStartedButton.alpha = 0.4f

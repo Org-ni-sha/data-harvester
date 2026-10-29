@@ -79,7 +79,7 @@ class DeviceInfoHelper(private val context: Context) {
 
             when {
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> getCellularType()
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> getCellularRadioType()
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
                 else -> "UNKNOWN"
             }
@@ -92,8 +92,11 @@ class DeviceInfoHelper(private val context: Context) {
     /**
      * Attempt to determine the specific cellular network type (5G, LTE, 3G, 2G).
      * Falls back to "CELLULAR" if READ_PHONE_STATE is not granted.
+     *
+     * Reports the cellular radio even while Wi-Fi is the active network, so a row whose
+     * mobile bytes were counted under Wi-Fi can still be labelled with a mobile type.
      */
-    private fun getCellularType(): String {
+    fun getCellularRadioType(): String {
         return try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
@@ -128,7 +131,7 @@ class DeviceInfoHelper(private val context: Context) {
     /**
      * Get the current signal strength in dBm.
      *
-     * Uses TelephonyManager.getSignalStrength() on API 28+.
+     * Uses TelephonyManager.getSignalStrength() on API 29+.
      * Falls back to CellInfo-based reading on older APIs.
      * Returns -999 if unable to read signal strength.
      */
@@ -136,8 +139,10 @@ class DeviceInfoHelper(private val context: Context) {
         return try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // API 28+: Use getSignalStrength() directly
+            // getCellSignalStrengths() is API 29+; Android 9 (API 28) uses the
+            // CellInfo path below like older versions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // API 29+: Use getSignalStrength() directly
                 val signalStrength = tm.signalStrength
                 if (signalStrength != null) {
                     // getLevel() returns 0-4, but we want dBm for richer data
@@ -152,7 +157,7 @@ class DeviceInfoHelper(private val context: Context) {
                     -999
                 }
             } else {
-                // API 23-27: Try to get from CellInfo
+                // API 23-28: Try to get from CellInfo
                 @Suppress("MissingPermission")
                 val cellInfoList = tm.allCellInfo
                 if (cellInfoList != null && cellInfoList.isNotEmpty()) {
@@ -207,6 +212,36 @@ class DeviceInfoHelper(private val context: Context) {
             model
         } else {
             "$manufacturer $model"
+        }
+    }
+
+    /**
+     * Get the name of the active data network provider (e.g., Globe, Smart).
+     * Focuses on the default data subscription if dual-SIM.
+     */
+    fun getNetworkProvider(): String {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            var providerName: String? = null
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val subId = android.telephony.SubscriptionManager.getDefaultDataSubscriptionId()
+                if (subId != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    val simManager = tm.createForSubscriptionId(subId)
+                    providerName = simManager.simOperatorName.takeIf { !it.isNullOrBlank() }
+                        ?: simManager.networkOperatorName.takeIf { !it.isNullOrBlank() }
+                }
+            }
+            
+            if (providerName.isNullOrBlank()) {
+                providerName = tm.simOperatorName.takeIf { !it.isNullOrBlank() }
+                    ?: tm.networkOperatorName.takeIf { !it.isNullOrBlank() }
+            }
+            
+            providerName?.trim()?.takeIf { it.isNotBlank() } ?: "Unknown"
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get network provider", e)
+            "Unknown"
         }
     }
 }

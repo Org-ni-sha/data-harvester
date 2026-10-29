@@ -2,7 +2,9 @@ package com.capstone.dataharvester.data
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 /**
  * Room entity representing per-app data usage for a single collection interval.
@@ -13,7 +15,10 @@ import androidx.room.PrimaryKey
  *
  * Column names use snake_case to match the CSV export schema.
  */
-@Entity(tableName = "app_usage_records")
+@Entity(
+    tableName = "app_usage_records",
+    indices = [Index(value = ["record_uid"], unique = true)]
+)
 data class AppUsageRecord(
 
     @PrimaryKey(autoGenerate = true)
@@ -69,12 +74,29 @@ data class AppUsageRecord(
     @ColumnInfo(name = "end_time")
     val endTime: String = "",
 
+
     /** 1 if system/pre-installed app, 0 if user-installed */
     @ColumnInfo(name = "is_system_app")
     val isSystemApp: Int,
+    
+    /** Timezone offset from UTC in minutes */
+    @ColumnInfo(name = "utc_offset_minutes", defaultValue = "480")
+    val utcOffsetMinutes: Int = 480,
 
     /** Flag indicating if this record has been synced to the backend */
     @ColumnInfo(name = "is_synced")
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+
+    /** OK / COUNTER_RESET; LEGACY for rows from before v11 */
+    @ColumnInfo(name = "measurement_status", defaultValue = "LEGACY")
+    val measurementStatus: String = "LEGACY",
+
+    /** App version that collected the row; "legacy" for rows from before v11 */
+    @ColumnInfo(name = "collection_version", defaultValue = "legacy")
+    val collectionVersion: String = "legacy",
+
+    /** Random per-row id: the cloud's only uniqueness key and the upload acknowledgement key */
+    @ColumnInfo(name = "record_uid", defaultValue = "")
+    val recordUid: String = UUID.randomUUID().toString()
 
 )
