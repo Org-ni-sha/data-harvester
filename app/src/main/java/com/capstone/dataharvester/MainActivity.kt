@@ -2,6 +2,7 @@ package com.capstone.dataharvester
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -9,15 +10,15 @@ import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.room.withTransaction
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.data.CollectionLocks
+import com.capstone.dataharvester.ui.Dialogs
+import com.capstone.dataharvester.ui.Dialogs.withDangerButton
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
@@ -290,7 +291,7 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            AlertDialog.Builder(this@MainActivity)
+            Dialogs.builder(this@MainActivity)
                 .setTitle("Upload before resetting?")
                 .setMessage(
                     "%,d records have not been uploaded to the cloud yet.\n\n".format(pending) +
@@ -305,11 +306,11 @@ class MainActivity : AppCompatActivity() {
 
     /** Upload pending records, then always continue to the reset confirmation. */
     private fun uploadThenConfirmReset() {
-        val progress = AlertDialog.Builder(this)
-            .setTitle("Uploading…")
-            .setView(ProgressBar(this).apply { isIndeterminate = true; setPadding(0, 32, 0, 32) })
-            .setCancelable(false)
-            .show()
+        val progress = Dialogs.progress(
+            this,
+            "Uploading…",
+            "Sending the records that are not uploaded yet to the cloud."
+        )
 
         mainScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -342,6 +343,14 @@ class MainActivity : AppCompatActivity() {
             val deleteExports = CheckBox(this@MainActivity).apply {
                 text = "Also delete exported CSV files"
                 isChecked = false
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.dialog_body))
+                buttonTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(
+                        ContextCompat.getColor(this@MainActivity, R.color.accent_blue),
+                        ContextCompat.getColor(this@MainActivity, R.color.dialog_secondary_button)
+                    )
+                )
             }
             val container = FrameLayout(this@MainActivity).apply {
                 val pad = (20 * resources.displayMetrics.density).toInt()
@@ -349,7 +358,7 @@ class MainActivity : AppCompatActivity() {
                 addView(deleteExports)
             }
 
-            AlertDialog.Builder(this@MainActivity)
+            Dialogs.builder(this@MainActivity)
                 .setTitle("⚠️ Reset All Data?")
                 .setMessage(buildString {
                     append("This will permanently delete the records stored on this phone:\n\n")
@@ -368,6 +377,7 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("CANCEL", null)
                 .setCancelable(true)
                 .show()
+                .withDangerButton()
         }
     }
 

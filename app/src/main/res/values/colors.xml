@@ -24,6 +24,14 @@
     <color name="danger_red">#FFFF5252</color>
     <color name="export_blue">#FF2979FF</color>
 
+    <!-- Dialogs: a brighter blue panel than the cards, over a dimmed/blurred screen -->
+    <color name="dialog_surface_top">#FF1D3C73</color>
+    <color name="dialog_surface_bottom">#FF13284F</color>
+    <color name="dialog_outline">#662979FF</color>
+    <color name="dialog_body">#FFC9D6F0</color>
+    <color name="dialog_track">#33FFFFFF</color>
+    <color name="dialog_secondary_button">#FFB3C4E6</color>
+
     <!-- Legacy (kept for compatibility) -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>

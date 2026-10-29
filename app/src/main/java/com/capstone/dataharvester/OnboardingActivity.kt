@@ -12,12 +12,12 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.NetworkStatsHelper
+import com.capstone.dataharvester.ui.Dialogs
 
 /**
  * Onboarding / permission gate screen.
@@ -178,7 +178,7 @@ class OnboardingActivity : AppCompatActivity() {
     // ─── Terms and Consent ────────────────────────────────────────────────
 
     private fun showConsentDialog() {
-        AlertDialog.Builder(this)
+        Dialogs.builder(this)
             .setTitle(R.string.consent_title)
             .setMessage(getText(R.string.consent_body))
             .setPositiveButton(R.string.consent_agree) { _, _ -> acceptConsent() }
@@ -283,7 +283,7 @@ class OnboardingActivity : AppCompatActivity() {
     private fun requestBatteryOptimization() {
         if (isBatteryOptimizationIgnored()) return
 
-        AlertDialog.Builder(this)
+        Dialogs.builder(this)
             .setTitle("Allow unrestricted battery use")
             .setMessage(
                 "If a popup asks to let Data Harvester always run in the background, tap Allow.\n\n" +

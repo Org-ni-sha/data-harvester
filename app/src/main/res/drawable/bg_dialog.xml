@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Dialog panel: a blue gradient one step brighter than the dashboard cards, rounded like
+    them (16dp) and outlined in a faint accent blue so it stands out from the dimmed and
+    blurred screen behind it.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="16dp" />
+    <gradient
+        android:angle="270"
+        android:startColor="@color/dialog_surface_top"
+        android:endColor="@color/dialog_surface_bottom"
+        android:type="linear" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/dialog_outline" />
+</shape>

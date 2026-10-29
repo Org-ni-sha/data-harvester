@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Android 12+: blur the screen behind dialogs as well as dimming it. Phones that
+        disable cross-window blur (battery saver, some low-end devices) fall back to the
+        dim from the base style.
+    -->
+    <style name="ThemeOverlay.DataHarvester.Dialog" parent="ThemeOverlay.DataHarvester.Dialog.Base">
+        <item name="android:windowBlurBehindEnabled">true</item>
+        <item name="android:windowBlurBehindRadius">24dp</item>
+    </style>
+</resources>
