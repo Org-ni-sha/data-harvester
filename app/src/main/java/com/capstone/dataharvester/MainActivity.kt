@@ -7,12 +7,17 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.FrameLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.room.withTransaction
 import com.capstone.dataharvester.data.AppDatabase
+import com.capstone.dataharvester.data.CollectionLocks
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
@@ -25,11 +30,13 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.capstone.dataharvester.sync.CloudSyncManager
+import com.capstone.dataharvester.sync.SyncResult
 import com.capstone.dataharvester.sync.SyncWorker
 import com.capstone.dataharvester.update.UpdateManager
 import androidx.work.Constraints
@@ -37,6 +44,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.await
 import java.util.concurrent.TimeUnit
 
 /**
@@ -48,12 +56,17 @@ import java.util.concurrent.TimeUnit
  *  - Stats grid: record counts, today's usage, last record time
  *  - Start / Stop collection (side by side)
  *  - Export All CSV (both main + per-app, fixed filenames, overwrite)
- *  - Reset Data (confirmation dialog, clears both tables)
+ *  - Reset Data (optional upload first, then confirmation; clears this phone's tables only)
  *
  * Auto-refreshes stats every 10 seconds.
  * All permission handling is done in OnboardingActivity.
  */
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** Unique name of the periodic upload; Reset cancels and re-enqueues it */
+        const val SYNC_WORK_NAME = "CloudSQLiteSync"
+    }
 
     // Views
     private lateinit var statusDot: View
@@ -261,53 +274,134 @@ class MainActivity : AppCompatActivity() {
 
     // ─── Reset Data ────────────────────────────────────────────────────────
 
+    /**
+     * Step 1 of Reset: offer to upload pending records first. Closing this dialog
+     * (back, tap outside) cancels the reset. Skipped when nothing is pending.
+     * Reset only deletes data on this phone; the cloud databases are never touched.
+     */
     private fun confirmReset() {
         mainScope.launch {
             val db = AppDatabase.getInstance(this@MainActivity)
-            val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
-            val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
+            val pending = withContext(Dispatchers.IO) {
+                db.usageDao().countUnsynced() + db.appUsageDao().countUnsynced()
+            }
+            if (pending == 0) {
+                showResetConfirmation(uploadError = null)
+                return@launch
+            }
 
             AlertDialog.Builder(this@MainActivity)
-                .setTitle("⚠️ Reset All Data?")
+                .setTitle("Upload before resetting?")
                 .setMessage(
-                    "This will permanently delete all collected records:\n\n" +
-                    "• $mainCount usage records\n" +
-                    "• $appCount per-app records\n\n" +
-                    "This action cannot be undone."
+                    "%,d records have not been uploaded to the cloud yet.\n\n".format(pending) +
+                    "Upload them first so they are not lost?"
                 )
-                .setPositiveButton("RESET") { _, _ -> performReset() }
-                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("UPLOAD FIRST") { _, _ -> uploadThenConfirmReset() }
+                .setNegativeButton("SKIP UPLOAD") { _, _ -> showResetConfirmation(uploadError = null) }
+                .setCancelable(true)
                 .show()
         }
     }
 
-    private fun performReset() {
+    /** Upload pending records, then always continue to the reset confirmation. */
+    private fun uploadThenConfirmReset() {
+        val progress = AlertDialog.Builder(this)
+            .setTitle("Uploading…")
+            .setView(ProgressBar(this).apply { isIndeterminate = true; setPadding(0, 32, 0, 32) })
+            .setCancelable(false)
+            .show()
+
+        mainScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                if (!ConsentManager(this@MainActivity).isAccepted()) {
+                    SyncResult.Failure("Consent not given")
+                } else {
+                    CloudSyncManager(this@MainActivity).syncPendingData()
+                }
+            }
+            progress.dismiss()
+            updateStats()
+            showResetConfirmation(uploadError = (result as? SyncResult.Failure)?.reason)
+        }
+    }
+
+    /**
+     * Step 2 of Reset: always shown, whichever choice was made in step 1. States how
+     * many records are still not uploaded (those are lost) and lets the user also
+     * delete the exported CSV files, which are kept by default as a recovery copy.
+     */
+    private fun showResetConfirmation(uploadError: String?) {
+        mainScope.launch {
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
+            val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
+            val pending = withContext(Dispatchers.IO) {
+                db.usageDao().countUnsynced() + db.appUsageDao().countUnsynced()
+            }
+
+            val deleteExports = CheckBox(this@MainActivity).apply {
+                text = "Also delete exported CSV files"
+                isChecked = false
+            }
+            val container = FrameLayout(this@MainActivity).apply {
+                val pad = (20 * resources.displayMetrics.density).toInt()
+                setPadding(pad, 0, pad, 0)
+                addView(deleteExports)
+            }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("⚠️ Reset All Data?")
+                .setMessage(buildString {
+                    append("This will permanently delete the records stored on this phone:\n\n")
+                    append("• %,d usage records\n".format(mainCount))
+                    append("• %,d per-app records\n".format(appCount))
+                    if (uploadError != null) append("\nUpload failed: $uploadError\n")
+                    if (pending > 0) {
+                        append("\n⚠ %,d records are NOT uploaded and will be lost.\n".format(pending))
+                    } else {
+                        append("\nAll records are uploaded; the cloud copy is not affected.\n")
+                    }
+                    append("\nThis action cannot be undone.")
+                })
+                .setView(container)
+                .setPositiveButton("RESET") { _, _ -> performReset(deleteExports.isChecked) }
+                .setNegativeButton("CANCEL", null)
+                .setCancelable(true)
+                .show()
+        }
+    }
+
+    private fun performReset(deleteExports: Boolean) {
         mainScope.launch {
             try {
-                // Stop collection first if running
+                // Stop collection and uploads first
                 stopService(Intent(this@MainActivity, DataCollectionService::class.java))
                 updateStatusUI(isCollecting = false)
+                WorkManager.getInstance(this@MainActivity).cancelUniqueWork(SYNC_WORK_NAME).await()
 
                 val db = AppDatabase.getInstance(this@MainActivity)
 
                 withContext(Dispatchers.IO) {
-                    // Clear both tables
-                    db.usageDao().deleteAll()
-                    db.appUsageDao().deleteAll()
+                    // Wait for an upload or a collector tick that is still running
+                    CloudSyncManager.syncMutex.withLock {
+                        CollectionLocks.db.withLock {
+                            db.withTransaction {
+                                db.usageDao().deleteAll()
+                                db.appUsageDao().deleteAll()
+                                // Checkpoints too, so the next run starts a fresh baseline
+                                db.checkpointDao().clear()
+                                db.appUsageBaselineDao().clear()
+                            }
+                        }
+                    }
 
-                    // Delete stale CSV files from Downloads
-                    CsvExporter(this@MainActivity).deleteExportedFiles()
+                    // Exported CSVs are a recovery copy: only deleted when asked
+                    if (deleteExports) CsvExporter(this@MainActivity).deleteExportedFiles()
                 }
 
-                // Reset TrafficStats baselines in SharedPreferences
-                val prefs = getSharedPreferences(
-                    DataCollectionService.PREFS_NAME,
-                    Context.MODE_PRIVATE
-                )
-                // Clear collection checkpoints too, so the next run starts a fresh
-                // baseline instead of reusing state from before the reset
-                prefs.edit()
+                getSharedPreferences(DataCollectionService.PREFS_NAME, Context.MODE_PRIVATE).edit()
                     .putBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+                    // Pre-v11 checkpoint keys, in case the collector never ran on this version
                     .remove(DataCollectionService.PREF_LAST_CUMULATIVE_RX)
                     .remove(DataCollectionService.PREF_LAST_CUMULATIVE_TX)
                     .remove(DataCollectionService.PREF_LAST_APP_COLLECTION_TIME)
@@ -316,12 +410,15 @@ class MainActivity : AppCompatActivity() {
                 // Remove the cloud-total cache written by older versions
                 getSharedPreferences("historical_counts", Context.MODE_PRIVATE).edit().clear().apply()
 
+                // Re-enqueue the periodic upload cancelled above
+                setupCloudSync()
+
                 // Refresh UI
                 updateStats()
 
                 Toast.makeText(
                     this@MainActivity,
-                    "All data has been reset",
+                    "All data on this phone has been reset",
                     Toast.LENGTH_SHORT
                 ).show()
 
@@ -409,6 +506,13 @@ class MainActivity : AppCompatActivity() {
         )
         val isCollecting = prefs.getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
         updateStatusUI(isCollecting)
+
+        // Collection should be running but Android may not have let it restart in the
+        // background (e.g. after a reboot): restart it now, from the foreground.
+        // Starting an already running service is harmless.
+        if (isCollecting) {
+            ContextCompat.startForegroundService(this, Intent(this, DataCollectionService::class.java))
+        }
     }
 
     private fun startAutoRefresh() {
@@ -435,7 +539,7 @@ class MainActivity : AppCompatActivity() {
 
         // Queue the work. UPDATE ensures that the new interval is applied if already scheduled.
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "CloudSQLiteSync",
+            SYNC_WORK_NAME,
             ExistingPeriodicWorkPolicy.UPDATE,
             syncRequest
         )

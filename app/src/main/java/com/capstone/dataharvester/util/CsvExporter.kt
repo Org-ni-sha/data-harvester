@@ -43,12 +43,15 @@ class CsvExporter(private val context: Context) {
             "id,timestamp,datetime,hour,minute,day_of_week,is_weekend," +
             "time_period,bytes_rx,bytes_tx,bytes_total,mb_used," +
             "cumulative_mb_today,network_type,screen_on,battery_level," +
-            "device_id,signal_strength,is_charging,device_model,network_operator,utc_offset_minutes"
+            "device_id,signal_strength,is_charging,device_model,network_operator,utc_offset_minutes," +
+            "interval_start,interval_end,elapsed_ms,measurement_status,active_network_at_sample," +
+            "collection_version,record_uid"
 
         // Per-app CSV Header
         private const val APP_CSV_HEADER =
             "id,timestamp,datetime,device_id,package_name,app_name," +
-            "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,start_time,end_time,is_system_app,utc_offset_minutes"
+            "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,start_time,end_time,is_system_app,utc_offset_minutes," +
+            "measurement_status,collection_version,record_uid"
     }
 
     // ─── Public API ───────────────────────────────────────────────────────
@@ -236,7 +239,8 @@ class CsvExporter(private val context: Context) {
 
     /**
      * Delete both exported CSV files from Downloads.
-     * Called by MainActivity.performReset() so stale exports don't confuse users.
+     * Called by MainActivity.performReset() only when the user ticks "Also delete
+     * exported CSV files"; by default the exports are kept as a recovery copy.
      *
      * Uses MediaStore on API 29+, direct File access on older versions.
      */
@@ -295,7 +299,14 @@ class CsvExporter(private val context: Context) {
             r.isCharging.toString(),
             quote(r.deviceModel),
             quote(r.networkOperator),
-            r.utcOffsetMinutes.toString()
+            r.utcOffsetMinutes.toString(),
+            r.intervalStart.toString(),
+            r.intervalEnd.toString(),
+            r.elapsedMs.toString(),
+            quote(r.measurementStatus),
+            quote(r.activeNetworkAtSample),
+            quote(r.collectionVersion),
+            quote(r.recordUid)
         ).joinToString(",")
     }
 
@@ -319,7 +330,10 @@ class CsvExporter(private val context: Context) {
             quote(r.startTime),
             quote(r.endTime),
             r.isSystemApp.toString(),
-            r.utcOffsetMinutes.toString()
+            r.utcOffsetMinutes.toString(),
+            quote(r.measurementStatus),
+            quote(r.collectionVersion),
+            quote(r.recordUid)
         ).joinToString(",")
     }
 

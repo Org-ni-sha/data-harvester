@@ -41,5 +41,13 @@ interface AppUsageDao {
 
     /** Mark per-app records as synced after successful backend upload. */
     @Query("UPDATE app_usage_records SET is_synced = 1 WHERE id IN (:ids)")
-    suspend fun markAsSynced(ids: List<Int>)    
+    suspend fun markAsSynced(ids: List<Int>)
+
+    /** Number of records not yet uploaded (shown before a reset). */
+    @Query("SELECT COUNT(*) FROM app_usage_records WHERE is_synced = 0")
+    suspend fun countUnsynced(): Int
+
+    /** Mark records the server confirmed, by their per-row upload key. */
+    @Query("UPDATE app_usage_records SET is_synced = 1 WHERE record_uid IN (:recordUids)")
+    suspend fun markAsSyncedByRecordUid(recordUids: List<String>)
 }

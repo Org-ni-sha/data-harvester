@@ -10,8 +10,10 @@
     <!-- Foreground service (all Android versions) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
-    <!-- Foreground service type declaration (Android 14+ / API 34) -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Foreground service type declaration (Android 14+ / API 34).
+         specialUse, not dataSync: dataSync is capped at 6 h per day on Android 15+
+         and may not be started from BOOT_COMPLETED -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- Detect current network type (WiFi/LTE/5G) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -81,15 +83,20 @@
         <!-- Data Collection Foreground Service -->
         <service
             android:name=".DataCollectionService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Continuous on-device measurement of network data usage for a consented research study" />
+        </service>
 
-        <!-- Boot Receiver — restarts collection after reboot -->
+        <!-- Boot Receiver — restarts collection after reboot and after an app update -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

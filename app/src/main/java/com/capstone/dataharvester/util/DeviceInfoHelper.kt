@@ -79,7 +79,7 @@ class DeviceInfoHelper(private val context: Context) {
 
             when {
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> getCellularType()
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> getCellularRadioType()
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
                 else -> "UNKNOWN"
             }
@@ -92,8 +92,11 @@ class DeviceInfoHelper(private val context: Context) {
     /**
      * Attempt to determine the specific cellular network type (5G, LTE, 3G, 2G).
      * Falls back to "CELLULAR" if READ_PHONE_STATE is not granted.
+     *
+     * Reports the cellular radio even while Wi-Fi is the active network, so a row whose
+     * mobile bytes were counted under Wi-Fi can still be labelled with a mobile type.
      */
-    private fun getCellularType(): String {
+    fun getCellularRadioType(): String {
         return try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 

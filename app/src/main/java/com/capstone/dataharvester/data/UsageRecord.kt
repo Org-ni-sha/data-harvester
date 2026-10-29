@@ -2,7 +2,9 @@ package com.capstone.dataharvester.data
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 /**
  * Room entity representing a single data usage observation snapshot.
@@ -10,7 +12,10 @@ import androidx.room.PrimaryKey
  *
  * Column names use snake_case to match the CSV export schema.
  */
-@Entity(tableName = "usage_records")
+@Entity(
+    tableName = "usage_records",
+    indices = [Index(value = ["record_uid"], unique = true)]
+)
 data class UsageRecord(
 
     @PrimaryKey(autoGenerate = true)
@@ -61,7 +66,11 @@ data class UsageRecord(
     @ColumnInfo(name = "cumulative_mb_today")
     val cumulativeMbToday: Double,
 
-    /** Current network type: LTE / 5G / 3G / 2G / WIFI / CELLULAR / NONE / UNKNOWN */
+    /**
+     * Network the interval's bytes belong to: LTE / 5G / 3G / 2G / CELLULAR / WIFI / NONE / UNKNOWN.
+     * WIFI only when Wi-Fi was active for the whole interval AND the mobile counters moved
+     * by no more than noise, so dropping WIFI rows in cleaning never drops mobile usage.
+     */
     @ColumnInfo(name = "network_type")
     val networkType: String,
 
@@ -99,6 +108,34 @@ data class UsageRecord(
 
     /** Flag indicating if this record has been synced to the backend */
     @ColumnInfo(name = "is_synced")
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+
+    /** Wall-clock epoch millis the interval started (previous committed tick); 0 for legacy rows */
+    @ColumnInfo(name = "interval_start", defaultValue = "0")
+    val intervalStart: Long = 0L,
+
+    /** Wall-clock epoch millis the interval ended (= timestamp); 0 for legacy rows */
+    @ColumnInfo(name = "interval_end", defaultValue = "0")
+    val intervalEnd: Long = 0L,
+
+    /** Interval length from SystemClock.elapsedRealtime (immune to clock changes); -1 if unknown */
+    @ColumnInfo(name = "elapsed_ms", defaultValue = "-1")
+    val elapsedMs: Long = -1L,
+
+    /** OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP; LEGACY for rows from before v11 */
+    @ColumnInfo(name = "measurement_status", defaultValue = "LEGACY")
+    val measurementStatus: String = "LEGACY",
+
+    /** Raw active network when the tick fired (context only; network_type is the cleaning label) */
+    @ColumnInfo(name = "active_network_at_sample", defaultValue = "")
+    val activeNetworkAtSample: String = "",
+
+    /** App version that collected the row; "legacy" for rows from before v11 */
+    @ColumnInfo(name = "collection_version", defaultValue = "legacy")
+    val collectionVersion: String = "legacy",
+
+    /** Random per-row id: the cloud's only uniqueness key and the upload acknowledgement key */
+    @ColumnInfo(name = "record_uid", defaultValue = "")
+    val recordUid: String = UUID.randomUUID().toString()
 
 )

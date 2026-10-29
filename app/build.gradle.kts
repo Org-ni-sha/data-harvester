@@ -23,10 +23,13 @@ val missingEnvKeys = listOf("GATEWAY_URL", "API_KEY", "DB_NAME")
     .filter { envProperties.getProperty(it).isNullOrBlank() }
 
 // An APK built without these silently fails every sync, so refuse to build one.
-// Gradle sync/IDE import still works without a .env.
+// Gradle sync/IDE import and tests (testDebugUnitTest, compile*) still work without a .env.
+// Exact names only: a prefix match also hits internal tasks such as
+// bundleDebugClassesToCompileJar, which unit tests depend on.
+val apkTaskName = Regex("^(assemble|bundle|install)(Debug|Release)?$")
 gradle.taskGraph.whenReady {
     val buildsApk = allTasks.any { task ->
-        task.project == project && listOf("assemble", "bundle", "install").any { task.name.startsWith(it) }
+        task.project == project && apkTaskName.matches(task.name)
     }
     if (buildsApk && missingEnvKeys.isNotEmpty()) {
         throw GradleException(
@@ -43,8 +46,8 @@ android {
         applicationId = "com.capstone.dataharvester"
         minSdk = 23
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.6.1"
+        versionCode = 9
+        versionName = "1.6.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -68,6 +71,11 @@ android {
                 "proguard-rules.pro"
             )
         }
+    }
+
+    // Exported Room schemas, read by MigrationTestHelper in androidTest
+    sourceSets {
+        getByName("androidTest").assets.directories.add("$projectDir/schemas")
     }
 
     compileOptions {
@@ -99,6 +107,7 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.room.testing)
 
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)

@@ -26,10 +26,18 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v9: Added network_operator, utc_offset_minutes, and synced promo_records
  *  - v10: Replaced the stored ANDROID_ID in device_identity.hardware_id with the install UUID;
  *         repairs is_synced on installs upgraded from v1-v8; dropped promo_records (unused)
+ *  - v11: collection_checkpoint + app_usage_baseline tables (checkpoints committed with
+ *         their rows); interval/quality columns, record_uid and collection_version
  */
 @Database(
-    entities = [UsageRecord::class, AppUsageRecord::class, DeviceIdentity::class],
-    version = 10,
+    entities = [
+        UsageRecord::class,
+        AppUsageRecord::class,
+        DeviceIdentity::class,
+        CollectionCheckpoint::class,
+        AppUsageBaseline::class
+    ],
+    version = 11,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,6 +45,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun usageDao(): UsageDao
     abstract fun appUsageDao(): AppUsageDao
     abstract fun deviceIdentityDao(): DeviceIdentityDao
+    abstract fun checkpointDao(): CheckpointDao
+    abstract fun appUsageBaselineDao(): AppUsageBaselineDao
 
     companion object {
         @Volatile
@@ -249,6 +259,51 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from v10 to v11:
+         * - collection_checkpoint / app_usage_baseline: collection checkpoints move from
+         *   SharedPreferences into Room so they commit together with their rows
+         *   (DataCollectionService copies the old prefs values over once)
+         * - usage_records: interval start/end, elapsed_ms, measurement_status and the raw
+         *   active network, so delayed, baseline and reset samples are distinguishable
+         * - both record tables: collection_version and a random record_uid per row
+         *
+         * is_synced is deliberately NOT touched (Option A of the cloud transition):
+         * synced rows are already in DATAra_harvester and stay out of Dataharvester_v2;
+         * pending rows are in neither database and upload to v2 tagged 'legacy'.
+         */
+        // internal: exercised by MigrationTest in androidTest
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `collection_checkpoint` (`id` INTEGER NOT NULL, " +
+                        "`mobile_rx` INTEGER NOT NULL, `mobile_tx` INTEGER NOT NULL, " +
+                        "`last_tick_elapsed` INTEGER NOT NULL, `last_tick_wall` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `app_usage_baseline` (`uid` INTEGER NOT NULL, " +
+                        "`transport` TEXT NOT NULL, `anchor` INTEGER NOT NULL, `rx` INTEGER NOT NULL, " +
+                        "`tx` INTEGER NOT NULL, `taken_at` INTEGER NOT NULL, PRIMARY KEY(`uid`, `transport`))"
+                )
+
+                addColumnIfMissing(db, "usage_records", "interval_start", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "usage_records", "interval_end", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfMissing(db, "usage_records", "elapsed_ms", "INTEGER NOT NULL DEFAULT -1")
+                addColumnIfMissing(db, "usage_records", "measurement_status", "TEXT NOT NULL DEFAULT 'LEGACY'")
+                addColumnIfMissing(db, "usage_records", "active_network_at_sample", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "app_usage_records", "measurement_status", "TEXT NOT NULL DEFAULT 'LEGACY'")
+
+                for (table in listOf("usage_records", "app_usage_records")) {
+                    addColumnIfMissing(db, table, "collection_version", "TEXT NOT NULL DEFAULT 'legacy'")
+                    addColumnIfMissing(db, table, "record_uid", "TEXT NOT NULL DEFAULT ''")
+                    // SQLite has no uuid(); 16 random bytes as hex is just as unique
+                    db.execSQL("UPDATE $table SET record_uid = lower(hex(randomblob(16))) WHERE record_uid = ''")
+                    db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_${table}_record_uid` ON `$table` (`record_uid`)")
+                }
+            }
+        }
+
+        /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.
          */
@@ -268,7 +323,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10,
+                        MIGRATION_10_11
                     )
                     .build()
                     .also { INSTANCE = it }
