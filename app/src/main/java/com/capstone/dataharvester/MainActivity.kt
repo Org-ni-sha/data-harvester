@@ -171,6 +171,8 @@ class MainActivity : AppCompatActivity() {
             // Schedule cloud synchronization, and the watchdog that restarts a killed collector
             setupCloudSync()
             CollectionWatchdogWorker.schedule(this@MainActivity)
+
+            showOfficialCollectionNoticeOnce()
         }
     }
 
@@ -253,6 +255,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ─── Collection Control ────────────────────────────────────────────────
+
+    /**
+     * One-time notice, on the first dashboard visit after Get Started or after updating to
+     * 1.6.5: this phone is part of the official study, every record on it (older ones too)
+     * is uploaded, and hotspot sharing is measured. Shown until dismissed; Reset keeps it
+     * dismissed (StudyManager has its own prefs file).
+     */
+    private fun showOfficialCollectionNoticeOnce() {
+        val study = StudyManager(this)
+        if (study.isNoticeSeen()) return
+        mainScope.launch {
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val records = withContext(Dispatchers.IO) {
+                db.usageDao().getCount() + db.appUsageDao().getCount()
+            }
+            val collecting = getSharedPreferences(DataCollectionService.PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+
+            Dialogs.builder(this@MainActivity)
+                .setTitle("Official Collection")
+                .setMessage(buildString {
+                    append("This phone is part of the official study (${StudyManager.OFFICIAL_STUDY_ID}). ")
+                    append("Mobile data usage is measured every 30 seconds, and per app every 10 minutes, ")
+                    append("and uploaded to the research database.\n")
+                    if (records > 0) {
+                        append("\nThe %,d records already on this phone are part of the study ".format(records))
+                        append("and are uploaded too.\n")
+                    }
+                    append("\nIf you share mobile data through your hotspot, the amount shared is ")
+                    append("recorded (never what the other devices do).")
+                })
+                .setPositiveButton(if (collecting) "OK" else "START") { _, _ ->
+                    study.markNoticeSeen()
+                    if (!collecting) startCollection()
+                }
+                .apply {
+                    if (!collecting) setNegativeButton("LATER") { _, _ -> study.markNoticeSeen() }
+                }
+                .setCancelable(false)
+                .show()
+        }
+    }
 
     private fun startCollection() {
         launchCollectionService()

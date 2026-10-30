@@ -73,7 +73,7 @@ Deploy the ingest endpoint (the repository root is a Vercel project). Set these 
 ## Features
 
 - **Consent and onboarding**: a permission gate that explains every permission; no collection without consent.
-- **Official study**: every row collected by app 1.6.1 or later belongs to the study `dataharvester_v2` (`study_id`). There is no separate enrollment step.
+- **Official study**: every row collected by app 1.6.1 or later belongs to the study `dataharvester_v2` (`study_id`). There is no separate enrollment step. A one-time **Official Collection** notice tells each participant this on their first dashboard visit (after Get Started, or after updating to 1.6.5), including the number of records already on the phone and that hotspot sharing is measured.
 - **Hotspot usage**: data other devices use through the phone's hotspot is saved as its own per-app row every 10 minutes (`package_name = 'hotspot'`, uid -5). It is already included in the 30-second totals, so analysis can subtract it or use it as a feature.
 - **30-second primary collection** from TrafficStats, with a checkpoint saved in the same transaction as each row, so a crash or overlapping trigger never counts bytes twice or loses them.
 - **10-minute per-app collection** from NetworkStatsManager, for mobile and Wi-Fi separately.
