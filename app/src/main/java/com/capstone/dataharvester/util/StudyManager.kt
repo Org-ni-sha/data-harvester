@@ -18,6 +18,7 @@ class StudyManager(context: Context) {
     companion object {
         private const val PREFS_NAME = "study_prefs"
         private const val KEY_ENROLLED_AT = "enrolled_at"
+        private const val KEY_NOTICE_SEEN = "official_notice_seen"
 
         /** The official collection; matches the Dataharvester_v2 cloud database. */
         const val OFFICIAL_STUDY_ID = "dataharvester_v2"
@@ -39,5 +40,15 @@ class StudyManager(context: Context) {
         val now = System.currentTimeMillis()
         prefs.edit().putLong(KEY_ENROLLED_AT, now).commit()
         return now
+    }
+
+    /**
+     * True once the participant has dismissed the one-time "Official Collection" notice
+     * (shown on the first dashboard visit after Get Started, or after updating to 1.6.5).
+     */
+    fun isNoticeSeen(): Boolean = prefs.getBoolean(KEY_NOTICE_SEEN, false)
+
+    fun markNoticeSeen() {
+        prefs.edit().putBoolean(KEY_NOTICE_SEEN, true).apply()
     }
 }
