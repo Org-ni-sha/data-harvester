@@ -173,7 +173,7 @@ tasks.register("publishUpdate") {
     group = "distribution"
     // The unit tests include MigrationCoverageTest: no update ships a schema version
     // without the migration that carries existing records over
-    dependsOn("testReleaseUnitTest", "assembleRelease")
+    dependsOn("testDebugUnitTest", "assembleRelease")
     doLast {
         val versionName = android.defaultConfig.versionName!!
         val versionCode = android.defaultConfig.versionCode!!

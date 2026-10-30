@@ -96,6 +96,9 @@ jobs:
           } > .env
 
       - name: Test, build and sign (publishUpdate)
+        env:
+          # The branch whose update.json the built app will read
+          APP_GIT_BRANCH: ${{ github.ref_name }}
         run: |
           chmod +x gradlew
           # gradle.properties pins org.gradle.java.home to a Windows JDK path from one
