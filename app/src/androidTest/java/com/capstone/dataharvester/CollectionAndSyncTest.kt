@@ -211,6 +211,23 @@ class CollectionAndSyncTest {
     }
 
     @Test
+    fun onAnEmulator_theRealTransportUploadsNothing() = runBlocking {
+        // Only meaningful (and only safe) on an emulator: on a phone this would upload
+        org.junit.Assume.assumeTrue(com.capstone.dataharvester.util.Emulator.isEmulator())
+        insertRows(study, 2)
+        db.deviceIdentityDao().insert(
+            DeviceIdentity(
+                current_device_id = "emu", previous_device_id = null, hardware_id = "emu",
+                device_model = "sdk_gphone", linked_at = 1
+            )
+        )
+        val result = CloudSyncManager(context, db).syncPendingData()   // default transport
+        assertTrue(result is SyncResult.Failure && result.reason.contains("emulator"))
+        assertEquals(2, db.usageDao().countUnsynced(study))            // nothing marked uploaded
+        assertEquals(1, db.deviceIdentityDao().getAllUnsynced().size)
+    }
+
+    @Test
     fun deviceIdentity_staysPendingUntilTheServerConfirmsIt() = runBlocking {
         db.deviceIdentityDao().insert(
             DeviceIdentity(

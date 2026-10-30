@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import com.capstone.dataharvester.BuildConfig
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.util.DeviceIdManager
+import com.capstone.dataharvester.util.Emulator
 import com.capstone.dataharvester.util.StudyManager
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,7 +37,14 @@ class CloudSyncManager(
          * key); otherwise the direct gateway, for local testing only.
          */
         fun defaultTransport(): UploadTransport =
-            if (BuildConfig.INGEST_URL.isNotBlank()) {
+            if (Emulator.isEmulator()) {
+                // Emulator data is never study data: nothing (not even the device identity)
+                // leaves an emulator. Tests that need uploads pass their own transport.
+                object : UploadTransport {
+                    override fun upload(batch: UploadBatch): UploadAck =
+                        throw GatewayException("Uploads are disabled on emulators")
+                }
+            } else if (BuildConfig.INGEST_URL.isNotBlank()) {
                 IngestTransport(BuildConfig.INGEST_URL, BuildConfig.INGEST_APP_TOKEN)
             } else {
                 GatewayTransport(BuildConfig.GATEWAY_URL, BuildConfig.API_KEY, BuildConfig.DB_NAME)
