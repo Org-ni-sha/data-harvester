@@ -21,3 +21,6 @@ local.properties
 
 # Release APKs are attached to GitHub Releases, not committed (see README)
 /releases/
+
+# Local exports of the cloud database (participant data): never commit
+/backups/
