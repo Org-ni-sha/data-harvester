@@ -155,7 +155,7 @@ COMMIT;
 --   SELECT COUNT(*) FROM backup_v165_app_usage_records WHERE id NOT IN (SELECT id FROM app_usage_records);
 
 -- ── Part B (optional): undo the schema changes too ─────────────────────────────
--- Only while NO phone runs 1.6.4: 1.6.4 uploads these columns and fails without them.
+-- Only while NO phone runs 1.6.5: 1.6.5 uploads these columns and fails without them.
 -- 1.6.3 phones never use them, so keeping them is harmless. Delete the /* and */ lines to run it.
 /*
 DROP INDEX IF EXISTS idx_usage_records_study;

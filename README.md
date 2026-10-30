@@ -138,8 +138,9 @@ app/schemas/                     exported Room schemas (one JSON per database ve
 app/src/test/                    JVM unit tests
 app/src/androidTest/             device/emulator tests (migrations, collection, sync)
 api/                             Vercel ingest endpoint + its tests
-cloud_schema_v2.sql              full cloud schema
-cloud_schema_v2_upgrade_*.sql    upgrades to apply to the live cloud database per release
+cloud_schema/                    cloud database SQL:
+  cloud_schema_v2.sql            full cloud schema
+  cloud_schema_v2_upgrade_*.sql  upgrades to apply to the live cloud database per release
 update.json                      the update manifest phones read (written by publishUpdate)
 .github/workflows/release.yml    builds, signs and publishes a release on GitHub
 ```
@@ -196,7 +197,7 @@ Secrets cannot be read back from GitHub, so keep a private backup of the keystor
 ### Each release
 
 1. Raise `versionCode` and `versionName` in `app/build.gradle.kts`. If a table changed, raise `AppDatabase.VERSION` and add the migration (see Important notes). Commit and push.
-2. If the release has a `cloud_schema_v2_upgrade_<version>.sql`, apply it to the live database.
+2. If the release has a `cloud_schema/cloud_schema_v2_upgrade_<version>.sql`, apply it to the live database.
 3. GitHub > **Actions > Release APK > Run workflow**, choose the branch, keep **Pre-release** ticked for a test build. The workflow runs the unit tests, builds and signs the APK, creates the Release `v<version>` with the APK attached, checks the download, and commits `update.json` to that branch.
 4. Test: phones running a build **from that branch** are now offered the update.
 5. Roll out: put that `update.json` on the branch the participants' installed version reads (for 1.6.3 phones: `mod/cloud-issues`), for example by merging. Participants are offered the update from this moment.

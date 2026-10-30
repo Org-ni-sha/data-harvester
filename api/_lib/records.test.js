@@ -135,8 +135,8 @@ test('batchUid matches the app (CloudSyncManager.batchUid)', () => {
 // ── schema files ────────────────────────────────────────────────────────────
 
 test('the 1.6.5 upgrade on the deployed database matches a fresh cloud_schema_v2', () => {
-  const upgraded = fakeGateway('api/_lib/fixtures/deployed_2026-10-30.sql', 'cloud_schema_v2_upgrade_1.6.5.sql').db;
-  const fresh = fakeGateway('cloud_schema_v2.sql').db;
+  const upgraded = fakeGateway('api/_lib/fixtures/deployed_2026-10-30.sql', 'cloud_schema/cloud_schema_v2_upgrade_1.6.5.sql').db;
+  const fresh = fakeGateway('cloud_schema/cloud_schema_v2.sql').db;
   for (const t of ['usage_records', 'app_usage_records', 'device_identity', 'upload_history']) {
     assert.deepEqual(columns(upgraded, t), columns(fresh, t), t);
   }
@@ -145,7 +145,7 @@ test('the 1.6.5 upgrade on the deployed database matches a fresh cloud_schema_v2
 // ── ingest flow ─────────────────────────────────────────────────────────────
 
 test('ingest inserts, reads back and acknowledges every row', async () => {
-  const { db, sql } = fakeGateway('cloud_schema_v2.sql');
+  const { db, sql } = fakeGateway('cloud_schema/cloud_schema_v2.sql');
   const b = body({ usage: [usageRow(), usageRow()], app: [appRow()] });
   const ack = await ingest(b, sql);
   assert.deepEqual(new Set(ack.usage_acked), new Set(b.usage.map((r) => r.record_uid)));
@@ -159,7 +159,7 @@ test('ingest inserts, reads back and acknowledges every row', async () => {
 });
 
 test('a retry after a lost response duplicates nothing and adds no history', async () => {
-  const { db, sql } = fakeGateway('cloud_schema_v2.sql');
+  const { db, sql } = fakeGateway('cloud_schema/cloud_schema_v2.sql');
   const b = body();
   await ingest(b, sql);            // the phone never saw this answer…
   const again = await ingest(b, sql); // …so it sends the same batch again
@@ -172,7 +172,7 @@ test('a retry after a lost response duplicates nothing and adds no history', asy
 });
 
 test('rows the database did not keep are not acknowledged', async () => {
-  const { sql } = fakeGateway('cloud_schema_v2.sql');
+  const { sql } = fakeGateway('cloud_schema/cloud_schema_v2.sql');
   const b = body({ usage: [usageRow(), usageRow()] });
   // The insert request "succeeds" but the database dropped the second row
   const lossy = async (text) => sql(/^\s*SELECT/i.test(text) ? text : text.split('\n').filter((l) => !l.includes(b.usage[1].record_uid)).join('\n'));
@@ -181,7 +181,7 @@ test('rows the database did not keep are not acknowledged', async () => {
 });
 
 test('ingest reports rejected rows and inserts the rest', async () => {
-  const { db, sql } = fakeGateway('cloud_schema_v2.sql');
+  const { db, sql } = fakeGateway('cloud_schema/cloud_schema_v2.sql');
   const good = usageRow();
   const bad = usageRow({ battery_level: 900 });
   const ack = await ingest(body({ usage: [good, bad], app: [] }), sql);
