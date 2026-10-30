@@ -35,7 +35,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Read version
         id: version
@@ -53,12 +53,13 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-java@v4
+      # 21 matches gradle/gradle-daemon-jvm.properties; the app still targets Java 17
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Write .env and keystore from secrets
         env:
@@ -97,7 +98,9 @@ jobs:
       - name: Test, build and sign (publishUpdate)
         run: |
           chmod +x gradlew
-          ./gradlew publishUpdate --no-daemon
+          # gradle.properties pins org.gradle.java.home to a Windows JDK path from one
+          # laptop; a -D on the command line takes precedence, so use this runner's JDK
+          ./gradlew publishUpdate --no-daemon -Dorg.gradle.java.home="$JAVA_HOME"
 
       - name: Create GitHub Release
         env:
