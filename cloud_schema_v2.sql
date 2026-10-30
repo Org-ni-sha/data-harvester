@@ -17,7 +17,11 @@
 -- package_name + timestamp: one snapshot has a MOBILE and a WIFI row for the same
 -- app and time, and both are real measurements.
 --
--- An existing v2 database is upgraded with cloud_schema_v2_upgrade_1.6.3.sql.
+-- Only rows collected after the phone's "Start Official Collection" step carry a
+-- study_id and are uploaded; analysis should still filter on study_id.
+--
+-- An existing v2 database is upgraded with cloud_schema_v2_upgrade_1.6.3.sql, then
+-- cloud_schema_v2_upgrade_1.6.4.sql.
 --
 -- received_at is filled by the server (epoch millis) and is never sent by the app.
 
@@ -52,13 +56,20 @@ CREATE TABLE IF NOT EXISTS usage_records (
     interval_start INTEGER NOT NULL DEFAULT 0,
     interval_end INTEGER NOT NULL DEFAULT 0,
     elapsed_ms INTEGER NOT NULL DEFAULT -1,
-    -- OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP / LEGACY
+    -- OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP / INTERRUPTED / LEGACY
     measurement_status TEXT NOT NULL DEFAULT 'LEGACY',
     -- raw active network at the tick; network_type is the cleaning label
     active_network_at_sample TEXT NOT NULL DEFAULT '',
     -- app version that collected the row; 'legacy' = before 1.6.3
-    collection_version TEXT NOT NULL DEFAULT 'legacy'
+    collection_version TEXT NOT NULL DEFAULT 'legacy',
+    -- measurement rules version (MeasurementRules.SCHEMA_VERSION): 0 unknown/pre-1.6.3,
+    -- 1 = 1.6.3, 2 = 1.6.4 (mobile label for any mobile byte, INTERRUPTED, per-app GAP)
+    schema_version INTEGER NOT NULL DEFAULT 0,
+    -- official study the row belongs to; '' = uploaded before study enrollment existed
+    study_id TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_usage_records_study
+    ON usage_records (study_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_records_record_uid
     ON usage_records (record_uid);
 CREATE INDEX IF NOT EXISTS idx_usage_records_device_local
@@ -91,10 +102,14 @@ CREATE TABLE IF NOT EXISTS app_usage_records (
     utc_offset_minutes INTEGER NOT NULL DEFAULT 480,
     received_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),
     record_uid TEXT,
-    -- OK / COUNTER_RESET / LEGACY
+    -- OK / COUNTER_RESET / GAP / CLOCK_ERROR / LEGACY
     measurement_status TEXT NOT NULL DEFAULT 'LEGACY',
-    collection_version TEXT NOT NULL DEFAULT 'legacy'
+    collection_version TEXT NOT NULL DEFAULT 'legacy',
+    schema_version INTEGER NOT NULL DEFAULT 0,
+    study_id TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_app_usage_records_study
+    ON app_usage_records (study_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_usage_records_record_uid
     ON app_usage_records (record_uid);
 CREATE INDEX IF NOT EXISTS idx_app_usage_records_device_local
@@ -112,12 +127,19 @@ CREATE TABLE IF NOT EXISTS device_identity (
     device_model TEXT NOT NULL,
     network_provider TEXT NOT NULL DEFAULT 'Unknown',
     app_version TEXT NOT NULL DEFAULT '',
-    linked_at INTEGER NOT NULL
+    linked_at INTEGER NOT NULL,
+    -- study the install enrolled in, and when (epoch millis; -1 = not enrolled)
+    study_id TEXT NOT NULL DEFAULT '',
+    enrolled_at INTEGER NOT NULL DEFAULT -1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_device_identity_device_id
     ON device_identity (device_id);
 
--- 4. One row per successful upload batch.
+-- 4. One row per logical upload batch (attempt history, not the dataset size:
+--    count usage_records / app_usage_records directly for that).
+--    records_uploaded = rows this batch newly added (safe to SUM);
+--    records_attempted / records_confirmed = rows sent / rows read back.
+--    batch_uid is a hash of the batch's record_uids, so a re-sent batch adds no row.
 CREATE TABLE IF NOT EXISTS upload_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id TEXT NOT NULL,
@@ -127,10 +149,15 @@ CREATE TABLE IF NOT EXISTS upload_history (
     records_uploaded INTEGER NOT NULL,
     payload_size_bytes INTEGER NOT NULL,
     payload_size_kb REAL NOT NULL,
-    app_version TEXT NOT NULL DEFAULT ''
+    app_version TEXT NOT NULL DEFAULT '',
+    batch_uid TEXT,
+    records_attempted INTEGER NOT NULL DEFAULT -1,
+    records_confirmed INTEGER NOT NULL DEFAULT -1
 );
 CREATE INDEX IF NOT EXISTS idx_upload_history_device_id
     ON upload_history (device_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_upload_history_batch_uid
+    ON upload_history (batch_uid);
 
 -- 5. Readable respondent IDs (R001...) for the manuscript; filled at export time.
 CREATE TABLE IF NOT EXISTS respondent_map (

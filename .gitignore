@@ -14,3 +14,10 @@
 .cxx
 local.properties
 .env   
+
+# Signing keys: share privately, never commit (see .env.example)
+*.keystore
+*.jks
+
+# Release APKs are attached to GitHub Releases, not committed (see README)
+/releases/

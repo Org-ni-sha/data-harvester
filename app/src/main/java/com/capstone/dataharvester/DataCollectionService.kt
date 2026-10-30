@@ -25,12 +25,16 @@ import com.capstone.dataharvester.data.AppUsageBaseline
 import com.capstone.dataharvester.data.AppUsageRecord
 import com.capstone.dataharvester.data.CollectionCheckpoint
 import com.capstone.dataharvester.data.CollectionLocks
+import com.capstone.dataharvester.data.DatabaseGuard
 import com.capstone.dataharvester.data.UsageRecord
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.DeviceIdManager
 import com.capstone.dataharvester.util.DeviceInfoHelper
+import com.capstone.dataharvester.util.MeasurementRules
 import com.capstone.dataharvester.util.NetworkStatsHelper
+import com.capstone.dataharvester.util.PrimaryCollector
 import com.capstone.dataharvester.util.NetworkStatsHelper.Transport
+import com.capstone.dataharvester.util.StudyManager
 import com.capstone.dataharvester.util.TrafficStatsHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +47,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import kotlin.math.abs
 
 /**
  * Foreground Service that collects mobile data usage at two intervals:
@@ -84,23 +87,19 @@ class DataCollectionService : Service() {
         const val TAG = "DataCollectionService"
         const val CHANNEL_ID = "data_harvester_channel"
         const val NOTIFICATION_ID = 1
-        const val COLLECTION_INTERVAL_MS = 30_000L // 30 seconds (change to 120_000L for 2 minutes)
-        const val APP_COLLECTION_INTERVAL_MS = 600_000L // 10 minutes for per-app collection
+        private const val UPDATE_NEEDED_NOTIFICATION_ID = 3
+        const val COLLECTION_INTERVAL_MS = MeasurementRules.COLLECTION_INTERVAL_MS // 30 seconds
+        const val APP_COLLECTION_INTERVAL_MS = MeasurementRules.APP_COLLECTION_INTERVAL_MS // 10 minutes
 
         // Minimum interval between network-switch-triggered collections (debounce)
         const val MIN_SWITCH_INTERVAL_MS = 5_000L // 5 seconds
 
-        // An interval longer than this (Doze, service killed, collection stopped) is a GAP
-        const val GAP_THRESHOLD_MS = 2 * COLLECTION_INTERVAL_MS + 15_000L
-
-        // Mobile bytes above this in an interval spent on Wi-Fi are real mobile usage
-        // (Wi-Fi assist, MMS, carrier apps), so the row gets a mobile label
-        const val MOBILE_NOISE_BYTES = 4_096L
-
-        // Wall-clock vs. elapsedRealtime drift above this between two ticks = reboot
-        private const val BOOT_TIME_TOLERANCE_MS = 60_000L
-
         // SharedPreferences keys
+        /** True while this process runs the collection loop; read by CollectionWatchdogWorker */
+        @Volatile
+        var isRunning = false
+            private set
+
         const val PREFS_NAME = "data_harvester_prefs"
         const val PREF_IS_COLLECTING = "is_collecting"
 
@@ -123,15 +122,16 @@ class DataCollectionService : Service() {
     // Track when service started (for runtime display in notification)
     private var startTimeMs: Long = 0L
 
-    // Set by onTimeout so onDestroy keeps PREF_IS_COLLECTING for the next restart
-    private var stoppedByTimeout = false
+    // Set when the service stops without the user asking (foreground-service timeout, or
+    // a database that needs a fixed update), so onDestroy keeps PREF_IS_COLLECTING and the
+    // next restart resumes collection
+    private var keepCollectingFlag = false
 
     // Coroutine scope for database operations (IO dispatcher)
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // One tick at a time: two overlapping ticks would read the same counter
-    // baseline / per-app checkpoint and count the same bytes twice
-    private val collectMutex = Mutex()
+    // One per-app tick at a time: two overlapping ticks would read the same per-app
+    // checkpoint and count the same bytes twice (primary ticks lock in PrimaryCollector)
     private val appCollectMutex = Mutex()
 
     // ─── Network Switch Detection ──────────────────────────────────────────
@@ -200,11 +200,39 @@ class DataCollectionService : Service() {
             return START_NOT_STICKY
         }
 
+        // Rows are only collected for the official study: an install that has not passed
+        // "Start Official Collection" (e.g. a boot restart right after updating) waits for it
+        if (!StudyManager(this).isEnrolled()) {
+            Log.w(TAG, "Not enrolled in the official study — not collecting")
+            prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         // Record start time for runtime display
         startTimeMs = System.currentTimeMillis()
 
         // Mark as collecting in prefs (for UI state restoration)
         prefs.edit().putBoolean(PREF_IS_COLLECTING, true).apply()
+        isRunning = true
+
+        // Open (and migrate) the database first: if this version cannot open it, stop
+        // without touching the records and wait for a fixed update
+        serviceScope.launch {
+            if (DatabaseGuard.ensureOpen(this@DataCollectionService)) {
+                handler.post { startLoops() }
+            } else {
+                Log.e(TAG, "Database unavailable (${DatabaseGuard.problem}) — collection paused until an update")
+                notifyUpdateNeeded()
+                keepCollectingFlag = true
+                stopSelf()
+            }
+        }
+        return START_STICKY // Restart service if killed by the system
+    }
+
+    private fun startLoops() {
+        if (!isRunning) return // stopped while the database was opening
 
         // Start the primary collection loop (TrafficStats, every 30s)
         handler.removeCallbacks(collectionRunnable) // Prevent duplicate callbacks
@@ -224,7 +252,6 @@ class DataCollectionService : Service() {
                 "(primary: ${COLLECTION_INTERVAL_MS / 1000}s, " +
                 "per-app: ${APP_COLLECTION_INTERVAL_MS / 1000}s, " +
                 "network-switch: enabled)")
-        return START_STICKY // Restart service if killed by the system
     }
 
     /**
@@ -234,17 +261,18 @@ class DataCollectionService : Service() {
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "Foreground service timeout (type $fgsType) — stopping cleanly")
-        stoppedByTimeout = true
+        keepCollectingFlag = true
         stopSelf()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         handler.removeCallbacks(collectionRunnable)
         handler.removeCallbacks(appCollectionRunnable)
         unregisterNetworkCallback()
         serviceScope.cancel()
-        if (!stoppedByTimeout) {
+        if (!keepCollectingFlag) {
             prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
         }
         Log.i(TAG, "Data collection stopped")
@@ -352,24 +380,13 @@ class DataCollectionService : Service() {
     // ─── Core Collection Logic ─────────────────────────────────────────────
 
     /**
-     * The primary checkpoint, moving the pre-v11 SharedPreferences baseline into Room
-     * the first time (afterwards the prefs keys are gone and Room is the only copy).
+     * Checkpoint to start from when Room has none: the pre-v11 SharedPreferences
+     * baseline (removed once the first tick has committed its Room checkpoint).
      */
-    private suspend fun loadCheckpoint(db: AppDatabase): CollectionCheckpoint {
-        db.checkpointDao().get()?.let { return it }
-
-        val handedOver = CollectionCheckpoint(
-            mobileRx = prefs.getLong(PREF_LAST_CUMULATIVE_RX, -1L),
-            mobileTx = prefs.getLong(PREF_LAST_CUMULATIVE_TX, -1L)
-        )
-        db.checkpointDao().upsert(handedOver)
-        prefs.edit()
-            .remove(PREF_LAST_CUMULATIVE_RX)
-            .remove(PREF_LAST_CUMULATIVE_TX)
-            .remove(PREF_LAST_APP_COLLECTION_TIME) // per-app baselines restart in app_usage_baseline
-            .apply()
-        return handedOver
-    }
+    private fun prefsCheckpoint() = CollectionCheckpoint(
+        mobileRx = prefs.getLong(PREF_LAST_CUMULATIVE_RX, -1L),
+        mobileTx = prefs.getLong(PREF_LAST_CUMULATIVE_TX, -1L)
+    )
 
     /**
      * Single collection tick. Called every 30 seconds by the Handler, and on a network
@@ -378,48 +395,21 @@ class DataCollectionService : Service() {
      */
     private fun collectData(switchedFrom: String? = null) {
         serviceScope.launch {
-            collectMutex.withLock {
-                CollectionLocks.db.withLock {
-                    try {
-                        collectDataLocked(switchedFrom)
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "Permission error — stopping service", e)
-                        stopSelf()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Collection tick failed — bytes carry over to the next tick", e)
-                    }
-                }
+            try {
+                collectDataLocked(switchedFrom)
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Permission error — stopping service", e)
+                stopSelf()
+            } catch (e: Exception) {
+                Log.e(TAG, "Collection tick failed — bytes carry over to the next tick", e)
             }
         }
     }
 
     private suspend fun collectDataLocked(switchedFrom: String?) {
         val db = AppDatabase.getInstance(this@DataCollectionService)
-        val dao = db.usageDao()
-        val cp = loadCheckpoint(db)
-        trafficHelper.initializeFromSavedState(cp.mobileRx, cp.mobileTx)
 
-        // ── 1. Interval timing and reboot detection ──
-        val now = Calendar.getInstance()
-        val timestamp = now.timeInMillis
-        val nowElapsed = SystemClock.elapsedRealtime()
-        val hasPreviousTick = cp.lastTickElapsed >= 0 && cp.lastTickWall > 0
-        // Boot time (wall clock minus uptime) moves only on a reboot (or a large clock change)
-        val rebooted = hasPreviousTick && (
-            nowElapsed < cp.lastTickElapsed ||
-            abs((timestamp - nowElapsed) - (cp.lastTickWall - cp.lastTickElapsed)) > BOOT_TIME_TOLERANCE_MS
-        )
-        val elapsedMs = if (hasPreviousTick && !rebooted) nowElapsed - cp.lastTickElapsed else -1L
-
-        // ── 2. Get usage delta from TrafficStats ──
-        val delta = trafficHelper.getUsageDelta(forceReset = rebooted)
-        val status = when {
-            delta.status != TrafficStatsHelper.Status.OK -> delta.status.name
-            elapsedMs < 0 || elapsedMs > GAP_THRESHOLD_MS -> "GAP" // real bytes, long or unknown span
-            else -> "OK"
-        }
-
-        // ── 3. Read device state ──
+        // ── 1. Read device state (before the lock; none of it depends on the checkpoint) ──
         val batteryLevel = deviceHelper.getBatteryLevel()
         val screenOn = deviceHelper.isScreenOn()
         val activeNetwork = deviceHelper.getNetworkType()
@@ -427,8 +417,11 @@ class DataCollectionService : Service() {
         val charging = deviceHelper.isCharging()
         val deviceModel = deviceHelper.getDeviceModel()
         val deviceId = deviceIdManager.getDeviceId()
+        val networkOperator = deviceHelper.getNetworkProvider()
+        val studyId = StudyManager(this@DataCollectionService).studyId()
+        val cellularSeen = cellularSeenThisInterval
 
-        // ── 4. Label the interval (cleaning drops WIFI rows, so WIFI must hold no mobile bytes) ──
+        // The network the closing interval ran on (a switch closes it under the old one)
         val intervalNetwork = when (switchedFrom) {
             null -> activeNetwork
             "WIFI" -> "WIFI"
@@ -436,58 +429,41 @@ class DataCollectionService : Service() {
             "NONE" -> "NONE"
             else -> activeNetwork
         }
-        val networkType = if (
-            intervalNetwork == "WIFI" &&
-            (cellularSeenThisInterval || delta.bytesTotal > MOBILE_NOISE_BYTES)
-        ) {
-            deviceHelper.getCellularRadioType()
-        } else {
-            intervalNetwork
-        }
 
-        // ── 5. Compute temporal features ──
-        val datetimeStr = isoFormat().format(now.time)
-        val dateStr = dateOnlyFormat().format(now.time)
-        val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(timestamp) / 60000
-        val networkOperator = deviceHelper.getNetworkProvider()
-        val hour = now.get(Calendar.HOUR_OF_DAY)
-        val minute = now.get(Calendar.MINUTE)
-
-        // Convert Calendar day (Sun=1..Sat=7) to ISO day (Mon=1..Sun=7)
-        val dayOfWeek = run {
-            val calDay = now.get(Calendar.DAY_OF_WEEK)
-            if (calDay == Calendar.SUNDAY) 7 else calDay - 1
-        }
-        val isWeekend = if (dayOfWeek >= 6) 1 else 0
-
-        val timePeriod = when (hour) {
-            in 5..11 -> "Morning"
-            in 12..16 -> "Afternoon"
-            in 17..20 -> "Evening"
-            else -> "Night"
-        }
-
-        val mbUsedThisTick = delta.bytesTotal / 1048576.0
-
-        // ── 6. Insert the record and the new checkpoint in ONE transaction ──
-        // A crash leaves either both or neither, so a restart never recounts saved bytes
-        val cumulativeMbToday = db.withTransaction {
-            val cumulative = dao.getTodaySum(dateStr) + mbUsedThisTick
-            dao.insert(
+        // ── 2. Checkpoint → counters → delta → row + checkpoint, under the collection lock ──
+        val committed = PrimaryCollector(db) { prefsCheckpoint() }.tick(
+            now = {
+                val wall = System.currentTimeMillis()
+                PrimaryCollector.Now(SystemClock.elapsedRealtime(), wall, dateOnlyFormat().format(Date(wall)))
+            },
+            readCounters = { trafficHelper.readMobileCounters() },
+            buildRecord = { tick, now, cumulativeMbToday ->
+                val cal = Calendar.getInstance().apply { timeInMillis = now.wall }
+                val hour = cal.get(Calendar.HOUR_OF_DAY)
+                // Calendar day (Sun=1..Sat=7) → ISO day (Mon=1..Sun=7)
+                val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK).let { if (it == Calendar.SUNDAY) 7 else it - 1 }
                 UsageRecord(
-                    timestamp = timestamp,
-                    datetimeStr = datetimeStr,
+                    timestamp = now.wall,
+                    datetimeStr = isoFormat().format(Date(now.wall)),
                     hour = hour,
-                    minute = minute,
+                    minute = cal.get(Calendar.MINUTE),
                     dayOfWeek = dayOfWeek,
-                    isWeekend = isWeekend,
-                    timePeriod = timePeriod,
-                    bytesRx = delta.bytesRx,
-                    bytesTx = delta.bytesTx,
-                    bytesTotal = delta.bytesTotal,
-                    mbUsed = mbUsedThisTick,
-                    cumulativeMbToday = cumulative,
-                    networkType = networkType,
+                    isWeekend = if (dayOfWeek >= 6) 1 else 0,
+                    timePeriod = when (hour) {
+                        in 5..11 -> "Morning"
+                        in 12..16 -> "Afternoon"
+                        in 17..20 -> "Evening"
+                        else -> "Night"
+                    },
+                    bytesRx = tick.bytesRx,
+                    bytesTx = tick.bytesTx,
+                    bytesTotal = tick.bytesTotal,
+                    mbUsed = tick.bytesTotal / 1048576.0,
+                    cumulativeMbToday = cumulativeMbToday,
+                    // Cleaning drops WIFI rows, so WIFI must hold no mobile bytes
+                    networkType = MeasurementRules.primaryNetworkLabel(
+                        intervalNetwork, cellularSeen, tick.bytesTotal
+                    ) { deviceHelper.getCellularRadioType() },
                     screenOn = if (screenOn) 1 else 0,
                     batteryLevel = batteryLevel,
                     deviceId = deviceId,
@@ -495,45 +471,45 @@ class DataCollectionService : Service() {
                     isCharging = if (charging) 1 else 0,
                     deviceModel = deviceModel,
                     networkOperator = networkOperator,
-                    utcOffsetMinutes = utcOffsetMinutes,
-                    intervalStart = if (hasPreviousTick && !rebooted) cp.lastTickWall else timestamp,
-                    intervalEnd = timestamp,
-                    elapsedMs = elapsedMs,
-                    measurementStatus = status,
+                    utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(now.wall) / 60000,
+                    intervalStart = tick.intervalStart,
+                    intervalEnd = now.wall,
+                    elapsedMs = tick.elapsedMs,
+                    measurementStatus = tick.status,
                     activeNetworkAtSample = activeNetwork,
-                    collectionVersion = BuildConfig.VERSION_NAME
+                    collectionVersion = BuildConfig.VERSION_NAME,
+                    schemaVersion = MeasurementRules.SCHEMA_VERSION,
+                    studyId = studyId
                 )
-            )
-            db.checkpointDao().upsert(
-                CollectionCheckpoint(
-                    // UNSUPPORTED readings are -1: keep the previous baseline
-                    mobileRx = if (delta.currentRx >= 0) delta.currentRx else cp.mobileRx,
-                    mobileTx = if (delta.currentTx >= 0) delta.currentTx else cp.mobileTx,
-                    lastTickElapsed = nowElapsed,
-                    lastTickWall = timestamp
-                )
-            )
-            cumulative
+            }
+        )
+
+        // The Room checkpoint now exists: the pre-v11 prefs copy is no longer needed
+        if (prefs.contains(PREF_LAST_CUMULATIVE_RX)) {
+            prefs.edit()
+                .remove(PREF_LAST_CUMULATIVE_RX)
+                .remove(PREF_LAST_CUMULATIVE_TX)
+                .remove(PREF_LAST_APP_COLLECTION_TIME) // per-app baselines restart in app_usage_baseline
+                .apply()
         }
-        trafficHelper.commit(delta)
         // The next interval starts on the current network
         cellularSeenThisInterval = isNonWifiData(currentNetworkType)
 
-        // ── 7. Update notification with current stats ──
-        val count = dao.getCount()
+        // ── 3. Update notification with current stats ──
+        val record = committed.record
+        val count = db.usageDao().getCount()
         val appCount = db.appUsageDao().getCount()
         val runtime = formatElapsedTime(System.currentTimeMillis() - startTimeMs)
         updateNotification(
-            "$count records | Apps: $appCount | Today: ${"%.1f".format(cumulativeMbToday)} MB | $runtime"
+            "$count records | Apps: $appCount | Today: ${"%.1f".format(record.cumulativeMbToday)} MB | $runtime"
         )
 
-        // Log for debugging
         Log.i(
             TAG,
-            "Record #$count [$status${switchedFrom?.let { ", switch from $it" } ?: ""}]: " +
-            "+${"%.3f".format(mbUsedThisTick)} MB (${delta.bytesTotal} bytes, ${elapsedMs}ms) | " +
-            "$networkType (active $activeNetwork) | Signal: ${signalStrength}dBm | " +
-            "Charging: $charging | Today: ${"%.1f".format(cumulativeMbToday)} MB"
+            "Record #$count [${record.measurementStatus}${switchedFrom?.let { ", switch from $it" } ?: ""}]: " +
+            "+${"%.3f".format(record.mbUsed)} MB (${record.bytesTotal} bytes, ${record.elapsedMs}ms) | " +
+            "${record.networkType} (active $activeNetwork) | Signal: ${signalStrength}dBm | " +
+            "Charging: $charging | Today: ${"%.1f".format(record.cumulativeMbToday)} MB"
         )
     }
 
@@ -625,7 +601,8 @@ class DataCollectionService : Service() {
      * Turn cumulative readings into rows for the span [since, until].
      * A UID missing from [baseline] had no usage at the baseline reading, so its whole
      * cumulative is new. A reading below its baseline (stats wiped, UID reused) is
-     * stored as a zero-byte COUNTER_RESET row.
+     * stored as a zero-byte COUNTER_RESET row; long or backwards spans are flagged
+     * by [MeasurementRules.appStatus].
      */
     private fun diffToRecords(
         transport: Transport,
@@ -638,6 +615,7 @@ class DataCollectionService : Service() {
         val sinceStr = iso.format(Date(since))
         val untilStr = iso.format(Date(until))
         val deviceId = deviceIdManager.getDeviceId()
+        val studyId = StudyManager(this).studyId()
         val utcOffsetMinutes = java.util.TimeZone.getDefault().getOffset(until) / 60000
 
         return current.mapNotNull { (uid, sum) ->
@@ -664,8 +642,12 @@ class DataCollectionService : Service() {
                 endTime = untilStr,
                 isSystemApp = if (app.isSystemApp) 1 else 0,
                 utcOffsetMinutes = utcOffsetMinutes,
-                measurementStatus = if (reset) "COUNTER_RESET" else "OK",
-                collectionVersion = BuildConfig.VERSION_NAME
+                // A span far over 10 minutes (collection stopped, Doze) keeps its real total
+                // but is flagged GAP, so it is not mistaken for an ordinary sample
+                measurementStatus = MeasurementRules.appStatus(since, until, counterReset = reset),
+                collectionVersion = BuildConfig.VERSION_NAME,
+                schemaVersion = MeasurementRules.SCHEMA_VERSION,
+                studyId = studyId
             )
         }
     }
@@ -711,6 +693,33 @@ class DataCollectionService : Service() {
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .build()
+        }
+    }
+
+    /** Separate from the collection notification, which disappears when the service stops. */
+    private fun notifyUpdateNeeded() {
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        val notification = builder
+            .setContentTitle("Data collection paused")
+            .setContentText("Your records are safe. Open Data Harvester to install the fixed update.")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        try {
+            getSystemService(NotificationManager::class.java).notify(UPDATE_NEEDED_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Cannot post notification (POST_NOTIFICATIONS denied)", e)
         }
     }
 

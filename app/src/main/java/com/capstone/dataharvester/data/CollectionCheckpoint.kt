@@ -30,9 +30,20 @@ data class CollectionCheckpoint(
     @ColumnInfo(name = "last_tick_elapsed")
     val lastTickElapsed: Long = -1L,
 
-    /** Wall-clock epoch millis of the last committed tick (start of the next interval) */
+    /** Wall-clock epoch millis of the last committed tick */
     @ColumnInfo(name = "last_tick_wall")
-    val lastTickWall: Long = -1L
+    val lastTickWall: Long = -1L,
+
+    /**
+     * elapsedRealtime / wall clock of the reading that set [mobileRx]/[mobileTx]. Differs
+     * from the last tick only after UNSUPPORTED ticks; the next row's interval starts here,
+     * so its bytes and its duration cover the same span.
+     */
+    @ColumnInfo(name = "counter_elapsed", defaultValue = "-1")
+    val counterElapsed: Long = -1L,
+
+    @ColumnInfo(name = "counter_wall", defaultValue = "-1")
+    val counterWall: Long = -1L
 )
 
 @Dao

@@ -17,12 +17,14 @@ import androidx.core.content.ContextCompat
 import androidx.room.withTransaction
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.data.CollectionLocks
+import com.capstone.dataharvester.data.DatabaseGuard
 import com.capstone.dataharvester.ui.Dialogs
 import com.capstone.dataharvester.ui.Dialogs.withDangerButton
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
 import com.capstone.dataharvester.util.DeviceInfoHelper
+import com.capstone.dataharvester.util.StudyManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var deviceIdText: TextView
     private lateinit var deviceModelText: TextView
     private lateinit var networkProviderText: TextView
+    private lateinit var studyText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var uploadButton: Button
@@ -119,6 +122,7 @@ class MainActivity : AppCompatActivity() {
         deviceIdText = findViewById(R.id.deviceIdText)
         deviceModelText = findViewById(R.id.deviceModelText)
         networkProviderText = findViewById(R.id.networkProviderText)
+        studyText = findViewById(R.id.studyText)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)  
         uploadButton = findViewById(R.id.uploadButton)
@@ -130,61 +134,101 @@ class MainActivity : AppCompatActivity() {
 
         // Display device identity and get network provider
         val currentNetworkProvider = displayDeviceInfo()
+        displayStudyInfo()
         
-        // Register device identity in database.
-        // No hardware identifier (ANDROID_ID) is read: the hardware_id column is kept only so
-        // the cloud's ON CONFLICT(hardware_id) upsert still works, and holds the random
-        // install UUID instead.
-        mainScope.launch {
-            val currentDeviceId = deviceIdManager.getDeviceId()
-            val deviceModel = deviceIdManager.getDeviceModel()
+        // Every button needs the database; until it is open they only explain why not
+        startButton.setOnClickListener { whenDatabaseReady { startCollection() } }
+        stopButton.setOnClickListener { whenDatabaseReady { stopCollection() } }
+        uploadButton.setOnClickListener { whenDatabaseReady { syncToCloud() } }
+        exportAllButton.setOnClickListener { whenDatabaseReady { exportAllCsv() } }
+        resetButton.setOnClickListener { whenDatabaseReady { confirmReset() } }
 
-            val db = AppDatabase.getInstance(this@MainActivity)
-            val dao = db.deviceIdentityDao()
-
-            val existing = withContext(Dispatchers.IO) { dao.getLatestByDeviceId(currentDeviceId) }
-            if (existing == null || existing.network_provider != currentNetworkProvider || existing.device_model != deviceModel) {
-                withContext(Dispatchers.IO) {
-                    dao.insert(
-                        com.capstone.dataharvester.data.DeviceIdentity(
-                            current_device_id = currentDeviceId,
-                            previous_device_id = null,
-                            hardware_id = currentDeviceId,
-                            device_model = deviceModel,
-                            network_provider = currentNetworkProvider,
-                            linked_at = System.currentTimeMillis()
-                        )
-                    )
-                }
-            }
-        }
-
-        // Button click listeners
-        startButton.setOnClickListener { startCollection() }
-        stopButton.setOnClickListener { stopCollection() }
-        uploadButton.setOnClickListener { syncToCloud() }
-        exportAllButton.setOnClickListener { exportAllCsv() }
-        resetButton.setOnClickListener { confirmReset() }
-
-        // Restore collection state
-        restoreCollectionState()
-
-        // Initial UI update + start auto-refresh
-        updateStats()
-        startAutoRefresh()
-
-        // Schedule cloud synchronization
-        setupCloudSync()
-
-        // Check for remote app updates and show success notification if just updated
+        // Check for remote app updates and show success notification if just updated.
+        // Needs no database, so it runs even when this version cannot open it: the
+        // update is how such a phone gets out of that state.
         val updateManager = UpdateManager(this)
         updateManager.checkAndNotifyIfUpdated()
         updateManager.checkForUpdates()
+
+        mainScope.launch {
+            // Opens (and migrates) the database. A failed migration leaves the records
+            // untouched; the dashboard then says so instead of crashing.
+            if (!DatabaseGuard.ensureOpen(this@MainActivity)) {
+                showDatabaseUnavailable()
+                return@launch
+            }
+            databaseReady = true
+
+            registerDeviceIdentity(currentNetworkProvider)
+
+            // Restore collection state
+            restoreCollectionState()
+
+            // Initial UI update + start auto-refresh
+            updateStats()
+            startAutoRefresh()
+
+            // Schedule cloud synchronization, and the watchdog that restarts a killed collector
+            setupCloudSync()
+            CollectionWatchdogWorker.schedule(this@MainActivity)
+        }
+    }
+
+    private var databaseReady = false
+
+    private fun whenDatabaseReady(action: () -> Unit) {
+        if (databaseReady) action()
+        else if (DatabaseGuard.problem != null) showDatabaseUnavailable()
+        // else: still opening (a migration can take a moment); the tap is ignored
+    }
+
+    private fun showDatabaseUnavailable() {
+        statusText.text = "Paused — update required"
+        applyDotColor(R.color.danger_red)
+        Dialogs.builder(this)
+            .setTitle("Update Required")
+            .setMessage(
+                "This version of Data Harvester cannot open your saved records. " +
+                    "Your records are safe and have not been changed.\n\n" +
+                    "Collection and uploads are paused until a fixed update is installed. " +
+                    "Please install the update when it is offered, or contact the research team."
+            )
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    /**
+     * Register device identity in database.
+     * No hardware identifier (ANDROID_ID) is read: the hardware_id column is kept only so
+     * the cloud's ON CONFLICT(hardware_id) upsert still works, and holds the random
+     * install UUID instead.
+     */
+    private suspend fun registerDeviceIdentity(currentNetworkProvider: String) {
+        val currentDeviceId = deviceIdManager.getDeviceId()
+        val deviceModel = deviceIdManager.getDeviceModel()
+
+        val dao = AppDatabase.getInstance(this@MainActivity).deviceIdentityDao()
+
+        val existing = withContext(Dispatchers.IO) { dao.getLatestByDeviceId(currentDeviceId) }
+        if (existing == null || existing.network_provider != currentNetworkProvider || existing.device_model != deviceModel) {
+            withContext(Dispatchers.IO) {
+                dao.insert(
+                    com.capstone.dataharvester.data.DeviceIdentity(
+                        current_device_id = currentDeviceId,
+                        previous_device_id = null,
+                        hardware_id = currentDeviceId,
+                        device_model = deviceModel,
+                        network_provider = currentNetworkProvider,
+                        linked_at = System.currentTimeMillis()
+                    )
+                )
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        updateStats()
+        if (databaseReady) updateStats()
     }
 
     override fun onDestroy() {
@@ -211,15 +255,109 @@ class MainActivity : AppCompatActivity() {
     // ─── Collection Control ────────────────────────────────────────────────
 
     private fun startCollection() {
+        if (!StudyManager(this).isEnrolled()) {
+            confirmStartOfficialCollection()
+            return
+        }
+        launchCollectionService()
+        Toast.makeText(this, "Collection started", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun launchCollectionService() {
         val intent = Intent(this, DataCollectionService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
             startService(intent)
         }
-
         updateStatusUI(isCollecting = true)
-        Toast.makeText(this, "Collection started", Toast.LENGTH_SHORT).show()
+    }
+
+    // ─── Start Official Collection ─────────────────────────────────────────
+
+    /**
+     * Shown by Start until this install is enrolled. Explains that records already on
+     * the phone belong to no study: they stay here (and in CSV exports) but are never
+     * uploaded to the official database.
+     */
+    private fun confirmStartOfficialCollection() {
+        mainScope.launch {
+            val db = AppDatabase.getInstance(this@MainActivity)
+            val older = withContext(Dispatchers.IO) {
+                db.usageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID) +
+                    db.appUsageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID)
+            }
+
+            Dialogs.builder(this@MainActivity)
+                .setTitle("Start Official Collection?")
+                .setMessage(buildString {
+                    append("This phone will join the official study ")
+                    append("(${StudyManager.OFFICIAL_STUDY_ID}). Only data collected from now on ")
+                    append("is uploaded to the research database. Usage counting starts fresh.\n")
+                    if (older > 0) {
+                        append("\n%,d older records on this phone are kept here and in ".format(older))
+                        append("Export CSV, but they are not part of the study and are never uploaded.\n")
+                    }
+                })
+                .setPositiveButton("START") { _, _ -> enrollAndStart() }
+                .setNegativeButton("CANCEL", null)
+                .setCancelable(true)
+                .show()
+        }
+    }
+
+    /**
+     * Enroll with fresh counter baselines, then start collecting. Collection and
+     * uploads are stopped and awaited first, so no tick can save a row that spans
+     * the enrollment time.
+     */
+    private fun enrollAndStart() {
+        mainScope.launch {
+            try {
+                stopService(Intent(this@MainActivity, DataCollectionService::class.java))
+                val db = AppDatabase.getInstance(this@MainActivity)
+
+                withContext(Dispatchers.IO) {
+                    CloudSyncManager.syncMutex.withLock {
+                        CollectionLocks.db.withLock {
+                            db.withTransaction {
+                                db.checkpointDao().clear()
+                                db.appUsageBaselineDao().clear()
+                                // The cloud identity row picks up the enrollment on the next upload
+                                db.deviceIdentityDao().markAllUnsynced()
+                            }
+                            // Pre-v11 checkpoint keys would otherwise be handed over as the baseline
+                            getSharedPreferences(DataCollectionService.PREFS_NAME, Context.MODE_PRIVATE).edit()
+                                .remove(DataCollectionService.PREF_LAST_CUMULATIVE_RX)
+                                .remove(DataCollectionService.PREF_LAST_CUMULATIVE_TX)
+                                .remove(DataCollectionService.PREF_LAST_APP_COLLECTION_TIME)
+                                .commit()
+                            StudyManager(this@MainActivity).enroll()
+                        }
+                    }
+                }
+
+                displayStudyInfo()
+                launchCollectionService()
+                Toast.makeText(this@MainActivity, "Official collection started", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Could not start official collection: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun displayStudyInfo() {
+        val study = StudyManager(this)
+        studyText.text = if (study.isEnrolled()) {
+            val since = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(study.enrolledAt()))
+            "Study: ${study.studyId()} (since $since)"
+        } else {
+            "Study: not enrolled — tap Start"
+        }
     }
 
     private fun stopCollection() {
@@ -284,7 +422,8 @@ class MainActivity : AppCompatActivity() {
         mainScope.launch {
             val db = AppDatabase.getInstance(this@MainActivity)
             val pending = withContext(Dispatchers.IO) {
-                db.usageDao().countUnsynced() + db.appUsageDao().countUnsynced()
+                db.usageDao().countUnsynced(StudyManager.OFFICIAL_STUDY_ID) +
+                    db.appUsageDao().countUnsynced(StudyManager.OFFICIAL_STUDY_ID)
             }
             if (pending == 0) {
                 showResetConfirmation(uploadError = null)
@@ -337,7 +476,12 @@ class MainActivity : AppCompatActivity() {
             val mainCount = withContext(Dispatchers.IO) { db.usageDao().getCount() }
             val appCount = withContext(Dispatchers.IO) { db.appUsageDao().getCount() }
             val pending = withContext(Dispatchers.IO) {
-                db.usageDao().countUnsynced() + db.appUsageDao().countUnsynced()
+                db.usageDao().countUnsynced(StudyManager.OFFICIAL_STUDY_ID) +
+                    db.appUsageDao().countUnsynced(StudyManager.OFFICIAL_STUDY_ID)
+            }
+            val preStudy = withContext(Dispatchers.IO) {
+                db.usageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID) +
+                    db.appUsageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID)
             }
 
             val deleteExports = CheckBox(this@MainActivity).apply {
@@ -368,8 +512,13 @@ class MainActivity : AppCompatActivity() {
                     if (pending > 0) {
                         append("\n⚠ %,d records are NOT uploaded and will be lost.\n".format(pending))
                     } else {
-                        append("\nAll records are uploaded; the cloud copy is not affected.\n")
+                        append("\nAll study records are uploaded; the cloud copy is not affected.\n")
                     }
+                    if (preStudy > 0) {
+                        append("\n%,d of these are from before the official study and exist only ".format(preStudy))
+                        append("on this phone. Export CSV first to keep a copy.\n")
+                    }
+                    append("\nStudy enrollment is kept: Start resumes official collection with fresh counters.\n")
                     append("\nThis action cannot be undone.")
                 })
                 .setView(container)
@@ -514,7 +663,9 @@ class MainActivity : AppCompatActivity() {
             DataCollectionService.PREFS_NAME,
             Context.MODE_PRIVATE
         )
-        val isCollecting = prefs.getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+        // Not enrolled: the service refuses to collect, so show Stopped and wait for Start
+        val isCollecting = prefs.getBoolean(DataCollectionService.PREF_IS_COLLECTING, false) &&
+            StudyManager(this).isEnrolled()
         updateStatusUI(isCollecting)
 
         // Collection should be running but Android may not have let it restart in the
