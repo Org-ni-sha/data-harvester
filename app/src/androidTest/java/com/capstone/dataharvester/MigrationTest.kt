@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.room.Room
 import com.capstone.dataharvester.data.AppDatabase
 import com.capstone.dataharvester.data.DatabaseGuard
+import com.capstone.dataharvester.util.StudyManager
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -121,6 +122,53 @@ class MigrationTest {
             assertEquals(5000L, c.getLong(0))
             assertEquals(1700000000000L, c.getLong(1))
         }
+    }
+
+    @Test
+    fun migrate12To13_rowsOnThePhoneJoinTheStudy_andUploadedRowsStayUploaded() {
+        val name = "migration-12-13"
+        helper.createDatabase(name, 12).use { db ->
+            for ((id, synced) in listOf(1 to 1, 2 to 0)) {
+                db.execSQL(
+                    "INSERT INTO usage_records (id, timestamp, datetime_str, hour, minute, day_of_week, " +
+                        "is_weekend, time_period, bytes_rx, bytes_tx, bytes_total, mb_used, cumulative_mb_today, " +
+                        "network_type, screen_on, battery_level, device_id, signal_strength, is_charging, " +
+                        "device_model, network_operator, utc_offset_minutes, is_synced, interval_start, " +
+                        "interval_end, elapsed_ms, measurement_status, active_network_at_sample, " +
+                        "collection_version, record_uid, study_id, schema_version) VALUES " +
+                        "($id, $id, 'x', 10, 0, 4, 0, 'Morning', 1, 1, 2, 0.0, 0.0, 'LTE', 1, 80, 'dev', -90, 0, " +
+                        "'Model', 'Globe', 480, $synced, 0, 1, 30000, 'OK', 'LTE', '1.6.3', 'uid-$id', '', 1)"
+                )
+                db.execSQL(
+                    "INSERT INTO app_usage_records (id, timestamp, datetime_str, device_id, package_name, app_name, " +
+                        "uid, bytes_rx, bytes_tx, bytes_total, network_type, query_start, start_time, end_time, " +
+                        "is_system_app, utc_offset_minutes, is_synced, measurement_status, collection_version, " +
+                        "record_uid, study_id, schema_version) VALUES " +
+                        "($id, $id, 'x', 'dev', 'pkg', 'App', 10100, 1, 1, 2, 'MOBILE', '', '', '', 0, 480, $synced, " +
+                        "'OK', '1.6.3', 'app-$id', '', 1)"
+                )
+            }
+            db.execSQL(
+                "INSERT INTO device_identity (id, current_device_id, hardware_id, device_model, linked_at, is_synced) " +
+                    "VALUES (1, 'dev', 'dev', 'Model', 1, 1)"
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(name, 13, true, AppDatabase.MIGRATION_12_13)
+
+        for (table in listOf("usage_records", "app_usage_records")) {
+            db.query("SELECT id, study_id, is_synced FROM $table ORDER BY id").use { c ->
+                while (c.moveToNext()) {
+                    assertEquals("$table #${c.getInt(0)} study_id", StudyManager.OFFICIAL_STUDY_ID, c.getString(1))
+                    // Uploaded rows are not sent again; pending rows are uploaded next sync
+                    assertEquals("$table #${c.getInt(0)} is_synced", if (c.getInt(0) == 1) 1 else 0, c.getInt(2))
+                }
+            }
+        }
+        db.query("SELECT is_synced FROM device_identity").use { c ->
+            assertTrue(c.moveToFirst()); assertEquals(0, c.getInt(0))
+        }
+        InstrumentationRegistry.getInstrumentation().targetContext.deleteDatabase(name)
     }
 
     @Test

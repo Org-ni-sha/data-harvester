@@ -64,10 +64,9 @@ class CloudSyncManager(
     suspend fun syncPendingData(): SyncResult = syncMutex.withLock { syncLocked() }
 
     private suspend fun syncLocked(): SyncResult {
-        // Only the official study's rows go to Dataharvester_v2. Before enrollment nothing
-        // is sent, not even the device identity; rows from before enrollment stay local.
+        // Only the official study's rows go to Dataharvester_v2: every row collected by
+        // app 1.6.1 or later (see StudyManager)
         val study = StudyManager(context)
-        if (!study.isEnrolled()) return SyncResult.Success(0, 0)
         val studyId = study.studyId()
         val enrolledAt = study.enrolledAt()
         val deviceId = DeviceIdManager(context).getDeviceId()

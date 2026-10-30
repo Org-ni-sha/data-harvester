@@ -64,7 +64,9 @@ function fakeGateway(...schemaFiles) {
   return { db, sql };
 }
 
-const columns = (db, table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name).sort();
+// name, type, NOT NULL and DEFAULT: an upgraded database must behave like a fresh one for old apps too
+const columns = (db, table) => db.prepare(`PRAGMA table_info(${table})`).all()
+  .map((c) => `${c.name} ${c.type} ${c.notnull ? 'NOT NULL' : ''} ${c.dflt_value ?? ''}`).sort();
 
 // ── validation ──────────────────────────────────────────────────────────────
 
@@ -132,8 +134,8 @@ test('batchUid matches the app (CloudSyncManager.batchUid)', () => {
 
 // ── schema files ────────────────────────────────────────────────────────────
 
-test('the 1.6.4 upgrade on the deployed database matches a fresh cloud_schema_v2', () => {
-  const upgraded = fakeGateway('api/_lib/fixtures/deployed_2026-10-30.sql', 'cloud_schema_v2_upgrade_1.6.4.sql').db;
+test('the 1.6.5 upgrade on the deployed database matches a fresh cloud_schema_v2', () => {
+  const upgraded = fakeGateway('api/_lib/fixtures/deployed_2026-10-30.sql', 'cloud_schema_v2_upgrade_1.6.5.sql').db;
   const fresh = fakeGateway('cloud_schema_v2.sql').db;
   for (const t of ['usage_records', 'app_usage_records', 'device_identity', 'upload_history']) {
     assert.deepEqual(columns(upgraded, t), columns(fresh, t), t);

@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.capstone.dataharvester.util.StudyManager
 
 /**
  * Room database for the Data Harvester app.
@@ -31,6 +32,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *  - v12: study_id and schema_version on both record tables (only rows of the enrolled
  *         study are uploaded);
  *         counter_elapsed / counter_wall on collection_checkpoint
+ *  - v13: rows already on the phone join the official study (every row collected by
+ *         app 1.6.1 or later belongs to it); no schema change
  */
 @Database(
     entities = [
@@ -56,7 +59,7 @@ abstract class AppDatabase : RoomDatabase() {
          * Schema version. Raising it needs a MIGRATION_<old>_<new> in [ALL_MIGRATIONS]:
          * MigrationCoverageTest (run by publishUpdate) fails otherwise.
          */
-        const val VERSION = 12
+        const val VERSION = 13
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -348,6 +351,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v12 → v13 (app 1.6.5): there is no separate enrollment step any more; every row
+         * collected by app 1.6.1 or later belongs to the official study. Rows saved before
+         * this version (study_id '') join it. is_synced is untouched: rows already uploaded
+         * are not sent again. The identity row is sent again so the cloud copy carries the
+         * study and its start time.
+         */
+        internal val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (table in listOf("usage_records", "app_usage_records")) {
+                    db.execSQL(
+                        "UPDATE $table SET study_id = ? WHERE study_id = ''",
+                        arrayOf(StudyManager.OFFICIAL_STUDY_ID)
+                    )
+                }
+                db.execSQL("UPDATE device_identity SET is_synced = 0")
+            }
+        }
+
         /** Every migration, oldest first. A new schema version adds its migration here. */
         val ALL_MIGRATIONS: Array<Migration>
             get() = arrayOf(
@@ -361,7 +383,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_8_9,
                 MIGRATION_9_10,
                 MIGRATION_10_11,
-                MIGRATION_11_12
+                MIGRATION_11_12,
+                MIGRATION_12_13
             )
 
         /**

@@ -15,11 +15,10 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.capstone.dataharvester.data.DatabaseGuard
 import com.capstone.dataharvester.util.ConsentManager
-import com.capstone.dataharvester.util.StudyManager
 import java.util.concurrent.TimeUnit
 
 /**
- * Every 15 minutes: if collection should be running (consent, enrolled, the user did not
+ * Every 15 minutes: if collection should be running (consent given, the user did not
  * stop it) but the service is gone — killed by the system or a vendor battery manager, or
  * stopped by the foreground-service timeout — start it again.
  *
@@ -51,7 +50,7 @@ class CollectionWatchdogWorker(context: Context, params: WorkerParameters) : Cor
             .getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
 
         if (!shouldCollect || DataCollectionService.isRunning) return Result.success()
-        if (!ConsentManager(context).isAccepted() || !StudyManager(context).isEnrolled()) return Result.success()
+        if (!ConsentManager(context).isAccepted()) return Result.success()
         // This version cannot open the records (missing migration): restarting would only
         // stop again. The service already told the participant; wait for the fixed update.
         if (!DatabaseGuard.ensureOpen(context)) return Result.success()
