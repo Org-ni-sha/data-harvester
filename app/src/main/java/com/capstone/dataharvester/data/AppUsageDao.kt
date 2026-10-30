@@ -47,9 +47,6 @@ interface AppUsageDao {
     @Query("SELECT COUNT(*) FROM app_usage_records WHERE is_synced = 0 AND study_id = :studyId")
     suspend fun countUnsynced(studyId: String): Int
 
-    /** Records from outside [studyId] (collected before enrollment); never uploaded. */
-    @Query("SELECT COUNT(*) FROM app_usage_records WHERE study_id != :studyId")
-    suspend fun countOutsideStudy(studyId: String): Int
 
     /** Mark records the server confirmed, by their per-row upload key. */
     @Query("UPDATE app_usage_records SET is_synced = 1 WHERE record_uid IN (:recordUids)")

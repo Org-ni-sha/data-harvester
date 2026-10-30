@@ -6,7 +6,7 @@ An Android app that measures how much mobile data a phone uses, every 30 seconds
 
 ## Introduction
 
-DATAra Harvester is the data collection tool of the DATAra capstone project. Participants install the app, read and accept the consent form, grant the permissions it needs, and tap **Start Official Collection**. From then on the app runs in the background and records:
+DATAra Harvester is the data collection tool of the DATAra capstone project. Participants install the app, read and accept the consent form, grant the permissions it needs, and tap **Start**. From then on the app runs in the background and records:
 
 - **Total mobile data usage** every 30 seconds (bytes received and sent), with the context of each interval: network type (Wi-Fi / LTE / 5G …), signal strength, battery level, charging and screen state, time of day.
 - **Per-app data usage** every 10 minutes (which apps used the data, on mobile and on Wi-Fi).
@@ -19,7 +19,8 @@ Records are uploaded automatically to the study database (`Dataharvester_v2` on 
 
 | Version | versionCode | Main changes |
 |---|---|---|
-| **1.6.4** | 10 | Study enrollment ("Start Official Collection"); checkpoint and counter fixes; per-app GAP flags; uploads through the ingest endpoint (no database key in the APK); per-row server validation; watchdog that restarts a killed collector; signed releases with verified in-app updates; update installs through Android's PackageInstaller; database guard (a missing migration pauses the app instead of crashing or erasing records) |
+| **1.6.5** | 11 | Hotspot usage recorded as its own per-app row (`package_name = 'hotspot'`); every row from 1.6.1 onward belongs to the official study (no separate enrollment step); plus everything planned for 1.6.4 (never released) |
+| 1.6.4 | 10 | Not released. Checkpoint and counter fixes; per-app GAP flags; uploads through the ingest endpoint (no database key in the APK); per-row server validation; watchdog that restarts a killed collector; signed releases with verified in-app updates; update installs through Android's PackageInstaller; database guard (a missing migration pauses the app instead of crashing or erasing records) |
 | 1.6.3 | 9 | Collection, sync and cloud-transition fixes (record_uid, measurement_status, collection_version) |
 | 1.6.1 | 8 | Consent form; move to `Dataharvester_v2`; battery-optimization guidance |
 | 1.5.0 | 7 | Device identity, network provider, sync improvements, migration safety and schema export |
@@ -36,7 +37,7 @@ The latest APK is attached to the newest [GitHub Release](https://github.com/say
 2. Tap the downloaded file and allow "Install unknown apps" for Chrome when asked.
 3. Open DATAra Harvester, read the consent form and accept it.
 4. Grant the requested permissions: notifications, phone state, **Usage Access**, and **battery optimization: Unrestricted**.
-5. Tap **Start Official Collection**. Keep the app installed; it collects and uploads on its own.
+5. Tap **Start**. Keep the app installed; it collects and uploads on its own.
 
 When an update is available the app offers it on the dashboard. Tap **Update**, then **Install**. Records are kept.
 
@@ -72,7 +73,8 @@ Deploy the ingest endpoint (the repository root is a Vercel project). Set these 
 ## Features
 
 - **Consent and onboarding**: a permission gate that explains every permission; no collection without consent.
-- **Study enrollment**: rows are tagged with `study_id`. Only rows collected after "Start Official Collection" are uploaded; earlier test rows stay on the phone.
+- **Official study**: every row collected by app 1.6.1 or later belongs to the study `dataharvester_v2` (`study_id`). There is no separate enrollment step.
+- **Hotspot usage**: data other devices use through the phone's hotspot is saved as its own per-app row every 10 minutes (`package_name = 'hotspot'`, uid -5). It is already included in the 30-second totals, so analysis can subtract it or use it as a feature.
 - **30-second primary collection** from TrafficStats, with a checkpoint saved in the same transaction as each row, so a crash or overlapping trigger never counts bytes twice or loses them.
 - **10-minute per-app collection** from NetworkStatsManager, for mobile and Wi-Fi separately.
 - **Data quality flags**: `measurement_status`, `interval_start` / `interval_end`, `elapsed_ms`, `schema_version`, and `collection_version` on every row.
@@ -136,8 +138,9 @@ app/schemas/                     exported Room schemas (one JSON per database ve
 app/src/test/                    JVM unit tests
 app/src/androidTest/             device/emulator tests (migrations, collection, sync)
 api/                             Vercel ingest endpoint + its tests
-cloud_schema_v2.sql              full cloud schema
-cloud_schema_v2_upgrade_*.sql    upgrades to apply to the live cloud database per release
+cloud_schema/                    cloud database SQL:
+  cloud_schema_v2.sql            full cloud schema
+  cloud_schema_v2_upgrade_*.sql  upgrades to apply to the live cloud database per release
 update.json                      the update manifest phones read (written by publishUpdate)
 .github/workflows/release.yml    builds, signs and publishes a release on GitHub
 ```
@@ -194,7 +197,7 @@ Secrets cannot be read back from GitHub, so keep a private backup of the keystor
 ### Each release
 
 1. Raise `versionCode` and `versionName` in `app/build.gradle.kts`. If a table changed, raise `AppDatabase.VERSION` and add the migration (see Important notes). Commit and push.
-2. If the release has a `cloud_schema_v2_upgrade_<version>.sql`, apply it to the live database.
+2. If the release has a `cloud_schema/cloud_schema_v2_upgrade_<version>.sql`, apply it to the live database.
 3. GitHub > **Actions > Release APK > Run workflow**, choose the branch, keep **Pre-release** ticked for a test build. The workflow runs the unit tests, builds and signs the APK, creates the Release `v<version>` with the APK attached, checks the download, and commits `update.json` to that branch.
 4. Test: phones running a build **from that branch** are now offered the update.
 5. Roll out: put that `update.json` on the branch the participants' installed version reads (for 1.6.3 phones: `mod/cloud-issues`), for example by merging. Participants are offered the update from this moment.
@@ -214,7 +217,7 @@ Then attach `releases/DataHarvester-<version>.apk` to a new GitHub Release `v<ve
 - **Always sign with the same keystore.** Android refuses an update signed with a different key, and the only way out is to uninstall, which **deletes the participant's records**. Keep the keystore and its passwords backed up privately; never commit them.
 - **versionCode must always go up.** Android never installs a lower version over a higher one. Installing an older version requires uninstalling, which deletes the records.
 - **Never add `fallbackToDestructiveMigration()`.** It "fixes" a migration crash by deleting the whole database. Instead, every database change raises `AppDatabase.VERSION`, adds a `MIGRATION_<old>_<new>` to `ALL_MIGRATIONS`, and gets a test in `MigrationTest.kt`. `publishUpdate` refuses to build when a migration is missing. If one still reaches a phone, `DatabaseGuard` pauses collection, shows "Update Required", and leaves the file untouched for the fixed update.
-- **The APK is public.** The repository and its releases can be downloaded by anyone, so nothing secret may be in the app. Uploads go through the ingest endpoint; the old database key in 1.6.x APKs should be revoked once all phones run 1.6.4 or later.
+- **The APK is public.** The repository and its releases can be downloaded by anyone, so nothing secret may be in the app. Uploads go through the ingest endpoint; the old database key in 1.6.x APKs should be revoked once all phones run 1.6.5 or later.
 - **Host the APK as a direct file link.** In-app updates need a URL that returns the file itself (GitHub Releases does). A Google Drive share link returns a web page; it is fine for sending the first install by hand, not for `update.json`.
 - **Battery settings matter.** Some brands (Vivo, Oppo, Xiaomi, Samsung) stop background apps aggressively. Participants should set battery usage to **Unrestricted**; gaps still show up as `GAP` rows instead of silent missing data.
 - **Upload new columns too.** A new record column must also be added to `sync/UploadPayload.kt`, `api/_lib/records.js`, and the cloud schema, or it stays on the phone.

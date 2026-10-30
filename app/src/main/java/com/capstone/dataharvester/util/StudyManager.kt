@@ -4,20 +4,19 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Enrollment in the official study, set by the "Start Official Collection" step.
+ * The official study (Dataharvester_v2). Every row collected by app 1.6.1 or later belongs
+ * to it, so there is no separate enrollment step: new rows are tagged with
+ * [OFFICIAL_STUDY_ID], and rows saved before 1.6.5 are tagged by MIGRATION_12_13.
  *
- * Only rows collected after enrollment carry [OFFICIAL_STUDY_ID], and only those rows
- * are uploaded to Dataharvester_v2. Older rows (study_id '') stay on the phone and in
- * the CSV export, but never reach the official database.
+ * Only rows tagged with the study are uploaded; rows already uploaded stay marked as
+ * uploaded, so nothing is sent twice.
  *
  * Kept in its own prefs file so Reset (which clears collection state) leaves it alone.
- * Changing [OFFICIAL_STUDY_ID] asks every phone to enroll again.
  */
 class StudyManager(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "study_prefs"
-        private const val KEY_STUDY_ID = "study_id"
         private const val KEY_ENROLLED_AT = "enrolled_at"
 
         /** The official collection; matches the Dataharvester_v2 cloud database. */
@@ -27,22 +26,18 @@ class StudyManager(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun isEnrolled(): Boolean = prefs.getString(KEY_STUDY_ID, null) == OFFICIAL_STUDY_ID
-
-    /** The study new rows belong to, or "" when not enrolled. */
-    fun studyId(): String = if (isEnrolled()) OFFICIAL_STUDY_ID else ""
-
-    /** Wall-clock epoch millis of enrollment, or -1 when not enrolled. */
-    fun enrolledAt(): Long = if (isEnrolled()) prefs.getLong(KEY_ENROLLED_AT, -1L) else -1L
+    /** The study every row belongs to. */
+    fun studyId(): String = OFFICIAL_STUDY_ID
 
     /**
-     * Record enrollment. Call only after collection is stopped and the counter
-     * baselines are cleared, so the first enrolled rows start from a fresh baseline.
+     * Wall-clock epoch millis when this install first ran a version that tags rows with
+     * the study (sent with the cloud device_identity row). Recorded on first use.
      */
-    fun enroll(now: Long = System.currentTimeMillis()) {
-        prefs.edit()
-            .putString(KEY_STUDY_ID, OFFICIAL_STUDY_ID)
-            .putLong(KEY_ENROLLED_AT, now)
-            .commit() // synchronous: the collector started right after must see it
+    fun enrolledAt(): Long {
+        val saved = prefs.getLong(KEY_ENROLLED_AT, -1L)
+        if (saved > 0) return saved
+        val now = System.currentTimeMillis()
+        prefs.edit().putLong(KEY_ENROLLED_AT, now).commit()
+        return now
     }
 }

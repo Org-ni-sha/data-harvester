@@ -255,10 +255,6 @@ class MainActivity : AppCompatActivity() {
     // ─── Collection Control ────────────────────────────────────────────────
 
     private fun startCollection() {
-        if (!StudyManager(this).isEnrolled()) {
-            confirmStartOfficialCollection()
-            return
-        }
         launchCollectionService()
         Toast.makeText(this, "Collection started", Toast.LENGTH_SHORT).show()
     }
@@ -273,91 +269,10 @@ class MainActivity : AppCompatActivity() {
         updateStatusUI(isCollecting = true)
     }
 
-    // ─── Start Official Collection ─────────────────────────────────────────
-
-    /**
-     * Shown by Start until this install is enrolled. Explains that records already on
-     * the phone belong to no study: they stay here (and in CSV exports) but are never
-     * uploaded to the official database.
-     */
-    private fun confirmStartOfficialCollection() {
-        mainScope.launch {
-            val db = AppDatabase.getInstance(this@MainActivity)
-            val older = withContext(Dispatchers.IO) {
-                db.usageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID) +
-                    db.appUsageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID)
-            }
-
-            Dialogs.builder(this@MainActivity)
-                .setTitle("Start Official Collection?")
-                .setMessage(buildString {
-                    append("This phone will join the official study ")
-                    append("(${StudyManager.OFFICIAL_STUDY_ID}). Only data collected from now on ")
-                    append("is uploaded to the research database. Usage counting starts fresh.\n")
-                    if (older > 0) {
-                        append("\n%,d older records on this phone are kept here and in ".format(older))
-                        append("Export CSV, but they are not part of the study and are never uploaded.\n")
-                    }
-                })
-                .setPositiveButton("START") { _, _ -> enrollAndStart() }
-                .setNegativeButton("CANCEL", null)
-                .setCancelable(true)
-                .show()
-        }
-    }
-
-    /**
-     * Enroll with fresh counter baselines, then start collecting. Collection and
-     * uploads are stopped and awaited first, so no tick can save a row that spans
-     * the enrollment time.
-     */
-    private fun enrollAndStart() {
-        mainScope.launch {
-            try {
-                stopService(Intent(this@MainActivity, DataCollectionService::class.java))
-                val db = AppDatabase.getInstance(this@MainActivity)
-
-                withContext(Dispatchers.IO) {
-                    CloudSyncManager.syncMutex.withLock {
-                        CollectionLocks.db.withLock {
-                            db.withTransaction {
-                                db.checkpointDao().clear()
-                                db.appUsageBaselineDao().clear()
-                                // The cloud identity row picks up the enrollment on the next upload
-                                db.deviceIdentityDao().markAllUnsynced()
-                            }
-                            // Pre-v11 checkpoint keys would otherwise be handed over as the baseline
-                            getSharedPreferences(DataCollectionService.PREFS_NAME, Context.MODE_PRIVATE).edit()
-                                .remove(DataCollectionService.PREF_LAST_CUMULATIVE_RX)
-                                .remove(DataCollectionService.PREF_LAST_CUMULATIVE_TX)
-                                .remove(DataCollectionService.PREF_LAST_APP_COLLECTION_TIME)
-                                .commit()
-                            StudyManager(this@MainActivity).enroll()
-                        }
-                    }
-                }
-
-                displayStudyInfo()
-                launchCollectionService()
-                Toast.makeText(this@MainActivity, "Official collection started", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(
-                    this@MainActivity,
-                    "Could not start official collection: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-    }
-
     private fun displayStudyInfo() {
         val study = StudyManager(this)
-        studyText.text = if (study.isEnrolled()) {
-            val since = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(study.enrolledAt()))
-            "Study: ${study.studyId()} (since $since)"
-        } else {
-            "Study: not enrolled — tap Start"
-        }
+        val since = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(study.enrolledAt()))
+        studyText.text = "Study: ${study.studyId()} (since $since)"
     }
 
     private fun stopCollection() {
@@ -479,10 +394,6 @@ class MainActivity : AppCompatActivity() {
                 db.usageDao().countUnsynced(StudyManager.OFFICIAL_STUDY_ID) +
                     db.appUsageDao().countUnsynced(StudyManager.OFFICIAL_STUDY_ID)
             }
-            val preStudy = withContext(Dispatchers.IO) {
-                db.usageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID) +
-                    db.appUsageDao().countOutsideStudy(StudyManager.OFFICIAL_STUDY_ID)
-            }
 
             val deleteExports = CheckBox(this@MainActivity).apply {
                 text = "Also delete exported CSV files"
@@ -514,11 +425,6 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         append("\nAll study records are uploaded; the cloud copy is not affected.\n")
                     }
-                    if (preStudy > 0) {
-                        append("\n%,d of these are from before the official study and exist only ".format(preStudy))
-                        append("on this phone. Export CSV first to keep a copy.\n")
-                    }
-                    append("\nStudy enrollment is kept: Start resumes official collection with fresh counters.\n")
                     append("\nThis action cannot be undone.")
                 })
                 .setView(container)
@@ -663,9 +569,7 @@ class MainActivity : AppCompatActivity() {
             DataCollectionService.PREFS_NAME,
             Context.MODE_PRIVATE
         )
-        // Not enrolled: the service refuses to collect, so show Stopped and wait for Start
-        val isCollecting = prefs.getBoolean(DataCollectionService.PREF_IS_COLLECTING, false) &&
-            StudyManager(this).isEnrolled()
+        val isCollecting = prefs.getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
         updateStatusUI(isCollecting)
 
         // Collection should be running but Android may not have let it restart in the

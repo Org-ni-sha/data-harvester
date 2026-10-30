@@ -17,11 +17,13 @@
 -- package_name + timestamp: one snapshot has a MOBILE and a WIFI row for the same
 -- app and time, and both are real measurements.
 --
--- Only rows collected after the phone's "Start Official Collection" step carry a
--- study_id and are uploaded; analysis should still filter on study_id.
+-- Every row collected by app 1.6.1 or later belongs to the official study
+-- (study_id 'dataharvester_v2'); 1.6.3 does not send study_id, so the DEFAULT fills it.
+-- Hotspot (1.6.5): app_usage_records rows with package_name 'hotspot' (uid -5) are data
+-- other devices used through the phone's hotspot, already included in usage_records.
 --
 -- An existing v2 database is upgraded with cloud_schema_v2_upgrade_1.6.3.sql, then
--- cloud_schema_v2_upgrade_1.6.4.sql.
+-- cloud_schema_v2_upgrade_1.6.5.sql.
 --
 -- received_at is filled by the server (epoch millis) and is never sent by the app.
 
@@ -62,11 +64,12 @@ CREATE TABLE IF NOT EXISTS usage_records (
     active_network_at_sample TEXT NOT NULL DEFAULT '',
     -- app version that collected the row; 'legacy' = before 1.6.3
     collection_version TEXT NOT NULL DEFAULT 'legacy',
-    -- measurement rules version (MeasurementRules.SCHEMA_VERSION): 0 unknown/pre-1.6.3,
-    -- 1 = 1.6.3, 2 = 1.6.4 (mobile label for any mobile byte, INTERRUPTED, per-app GAP)
-    schema_version INTEGER NOT NULL DEFAULT 0,
-    -- official study the row belongs to; '' = uploaded before study enrollment existed
-    study_id TEXT NOT NULL DEFAULT ''
+    -- measurement rules version (MeasurementRules.SCHEMA_VERSION): 0 = 1.6.1 ('legacy'),
+    -- 1 = 1.6.3 (the DEFAULT: 1.6.3 does not send it), 2 = 1.6.5 (mobile label for any
+    -- mobile byte, INTERRUPTED, per-app GAP)
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    -- official study the row belongs to
+    study_id TEXT NOT NULL DEFAULT 'dataharvester_v2'
 );
 CREATE INDEX IF NOT EXISTS idx_usage_records_study
     ON usage_records (study_id);
@@ -105,8 +108,8 @@ CREATE TABLE IF NOT EXISTS app_usage_records (
     -- OK / COUNTER_RESET / GAP / CLOCK_ERROR / LEGACY
     measurement_status TEXT NOT NULL DEFAULT 'LEGACY',
     collection_version TEXT NOT NULL DEFAULT 'legacy',
-    schema_version INTEGER NOT NULL DEFAULT 0,
-    study_id TEXT NOT NULL DEFAULT ''
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    study_id TEXT NOT NULL DEFAULT 'dataharvester_v2'
 );
 CREATE INDEX IF NOT EXISTS idx_app_usage_records_study
     ON app_usage_records (study_id);
@@ -128,8 +131,9 @@ CREATE TABLE IF NOT EXISTS device_identity (
     network_provider TEXT NOT NULL DEFAULT 'Unknown',
     app_version TEXT NOT NULL DEFAULT '',
     linked_at INTEGER NOT NULL,
-    -- study the install enrolled in, and when (epoch millis; -1 = not enrolled)
-    study_id TEXT NOT NULL DEFAULT '',
+    -- the study, and when the install first ran a version that sends it (epoch millis;
+    -- -1 = identity sent by 1.6.3)
+    study_id TEXT NOT NULL DEFAULT 'dataharvester_v2',
     enrolled_at INTEGER NOT NULL DEFAULT -1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_device_identity_device_id

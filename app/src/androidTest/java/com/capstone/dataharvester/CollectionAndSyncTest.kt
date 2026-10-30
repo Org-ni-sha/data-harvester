@@ -29,7 +29,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Collection and upload against a real (in-memory) Room database:
- * interrupted saves, overlapping triggers, pre-study exclusion and retry acknowledgements.
+ * interrupted saves, overlapping triggers, study filtering, retry acknowledgements and
+ * the hotspot pseudo-app.
  * Run on a device or emulator: ./gradlew connectedDebugAndroidTest
  */
 @RunWith(AndroidJUnit4::class)
@@ -116,6 +117,14 @@ class CollectionAndSyncTest {
         assertEquals(60_000L, next.tick.elapsedMs)
     }
 
+    @Test
+    fun tetheringUid_isRecordedAsTheHotspotRow() {
+        val app = com.capstone.dataharvester.util.NetworkStatsHelper(context)
+            .resolveApp(android.app.usage.NetworkStats.Bucket.UID_TETHERING)
+        assertEquals(com.capstone.dataharvester.util.NetworkStatsHelper.HOTSPOT_PACKAGE, app.packageName)
+        assertEquals("Hotspot (tethering)", app.appName)
+    }
+
     // ── upload ─────────────────────────────────────────────────────────────
 
     /** Records every batch; answers with [respond] (default: confirm everything). */
@@ -144,18 +153,10 @@ class CollectionAndSyncTest {
     private fun unsyncedUids() = runBlocking { db.usageDao().getAll().filter { !it.isSynced }.map { it.recordUid }.toSet() }
 
     @Test
-    fun notEnrolled_uploadsNothing() = runBlocking {
-        insertRows(study, 3)
-        val transport = FakeTransport()
-        assertEquals(SyncResult.Success(0, 0), CloudSyncManager(context, db, transport).syncPendingData())
-        assertTrue(transport.batches.isEmpty())
-    }
-
-    @Test
-    fun preStudyRows_areNeverUploaded() = runBlocking {
+    fun rowsOutsideTheStudy_areNeverUploaded() = runBlocking {
+        // Only possible for rows written outside MIGRATION_12_13 / the collector; still filtered
         val old = insertRows("", 5)
         val official = insertRows(study, 3)
-        StudyManager(context).enroll()
         val transport = FakeTransport()
 
         val result = CloudSyncManager(context, db, transport).syncPendingData()
@@ -169,7 +170,6 @@ class CollectionAndSyncTest {
     @Test
     fun partialAcknowledgement_marksOnlyConfirmedRows_andTheRetrySendsTheRest() = runBlocking {
         val uids = insertRows(study, 4)
-        StudyManager(context).enroll()
         val transport = FakeTransport()
         transport.respond = { b ->
             // The server holds only the first two rows after this request
@@ -190,7 +190,6 @@ class CollectionAndSyncTest {
     @Test
     fun transportError_marksNothing() = runBlocking {
         val uids = insertRows(study, 2)
-        StudyManager(context).enroll()
         val transport = FakeTransport { throw java.io.IOException("connection reset") }
         assertTrue(CloudSyncManager(context, db, transport).syncPendingData() is SyncResult.Failure)
         assertEquals(uids.toSet(), unsyncedUids())
@@ -199,7 +198,6 @@ class CollectionAndSyncTest {
     @Test
     fun serverRejectedRows_areSetAsideAndNotResent() = runBlocking {
         val uids = insertRows(study, 3)
-        StudyManager(context).enroll()
         val transport = FakeTransport { b ->
             val sent = b.usage.map { it["record_uid"] as String }
             UploadAck(sent.drop(1).toSet(), emptySet(), b.identity != null, usageRejected = mapOf(sent[0] to "bad value"))
@@ -214,7 +212,6 @@ class CollectionAndSyncTest {
 
     @Test
     fun deviceIdentity_staysPendingUntilTheServerConfirmsIt() = runBlocking {
-        StudyManager(context).enroll()
         db.deviceIdentityDao().insert(
             DeviceIdentity(
                 current_device_id = "d", previous_device_id = null, hardware_id = "d",

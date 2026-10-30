@@ -200,15 +200,6 @@ class DataCollectionService : Service() {
             return START_NOT_STICKY
         }
 
-        // Rows are only collected for the official study: an install that has not passed
-        // "Start Official Collection" (e.g. a boot restart right after updating) waits for it
-        if (!StudyManager(this).isEnrolled()) {
-            Log.w(TAG, "Not enrolled in the official study — not collecting")
-            prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
         // Record start time for runtime display
         startTimeMs = System.currentTimeMillis()
 
