@@ -1,9 +1,5 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "**/*",
-      "use": "@vercel/static"
-    }
-  ]
+  "functions": {
+    "api/ingest.js": { "maxDuration": 30 }
+  }
 }

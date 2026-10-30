@@ -92,6 +92,14 @@
                     android:textSize="13sp"
                     android:textColor="@color/text_secondary" />
 
+                <TextView
+                    android:id="@+id/studyText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Study: —"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary" />
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -334,7 +342,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="TrafficStats: 30s  ·  Per-app: 10min  ·  Top 20 apps"
+            android:text="TrafficStats: 30s  ·  Per-app: 10min"
             android:textSize="11sp"
             android:textColor="@color/text_hint"
             android:layout_marginBottom="16dp" />

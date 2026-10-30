@@ -1,0 +1,606 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 13,
+    "identityHash": "d6e243a386384b5c6b0482de546b1be7",
+    "entities": [
+      {
+        "tableName": "usage_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `datetime_str` TEXT NOT NULL, `hour` INTEGER NOT NULL, `minute` INTEGER NOT NULL, `day_of_week` INTEGER NOT NULL, `is_weekend` INTEGER NOT NULL, `time_period` TEXT NOT NULL, `bytes_rx` INTEGER NOT NULL, `bytes_tx` INTEGER NOT NULL, `bytes_total` INTEGER NOT NULL, `mb_used` REAL NOT NULL, `cumulative_mb_today` REAL NOT NULL, `network_type` TEXT NOT NULL, `screen_on` INTEGER NOT NULL, `battery_level` INTEGER NOT NULL, `device_id` TEXT NOT NULL, `signal_strength` INTEGER NOT NULL, `is_charging` INTEGER NOT NULL, `device_model` TEXT NOT NULL, `network_operator` TEXT NOT NULL DEFAULT 'Unknown', `utc_offset_minutes` INTEGER NOT NULL DEFAULT 480, `is_synced` INTEGER NOT NULL, `interval_start` INTEGER NOT NULL DEFAULT 0, `interval_end` INTEGER NOT NULL DEFAULT 0, `elapsed_ms` INTEGER NOT NULL DEFAULT -1, `measurement_status` TEXT NOT NULL DEFAULT 'LEGACY', `active_network_at_sample` TEXT NOT NULL DEFAULT '', `collection_version` TEXT NOT NULL DEFAULT 'legacy', `schema_version` INTEGER NOT NULL DEFAULT 0, `study_id` TEXT NOT NULL DEFAULT '', `record_uid` TEXT NOT NULL DEFAULT '')",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "datetimeStr",
+            "columnName": "datetime_str",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hour",
+            "columnName": "hour",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minute",
+            "columnName": "minute",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayOfWeek",
+            "columnName": "day_of_week",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isWeekend",
+            "columnName": "is_weekend",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timePeriod",
+            "columnName": "time_period",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesRx",
+            "columnName": "bytes_rx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesTx",
+            "columnName": "bytes_tx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesTotal",
+            "columnName": "bytes_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mbUsed",
+            "columnName": "mb_used",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cumulativeMbToday",
+            "columnName": "cumulative_mb_today",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "networkType",
+            "columnName": "network_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "screenOn",
+            "columnName": "screen_on",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batteryLevel",
+            "columnName": "battery_level",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceId",
+            "columnName": "device_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signalStrength",
+            "columnName": "signal_strength",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isCharging",
+            "columnName": "is_charging",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceModel",
+            "columnName": "device_model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "networkOperator",
+            "columnName": "network_operator",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'Unknown'"
+          },
+          {
+            "fieldPath": "utcOffsetMinutes",
+            "columnName": "utc_offset_minutes",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "480"
+          },
+          {
+            "fieldPath": "isSynced",
+            "columnName": "is_synced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intervalStart",
+            "columnName": "interval_start",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "intervalEnd",
+            "columnName": "interval_end",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "elapsedMs",
+            "columnName": "elapsed_ms",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "-1"
+          },
+          {
+            "fieldPath": "measurementStatus",
+            "columnName": "measurement_status",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'LEGACY'"
+          },
+          {
+            "fieldPath": "activeNetworkAtSample",
+            "columnName": "active_network_at_sample",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "collectionVersion",
+            "columnName": "collection_version",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'legacy'"
+          },
+          {
+            "fieldPath": "schemaVersion",
+            "columnName": "schema_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "studyId",
+            "columnName": "study_id",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "recordUid",
+            "columnName": "record_uid",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_usage_records_record_uid",
+            "unique": true,
+            "columnNames": [
+              "record_uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_usage_records_record_uid` ON `${TABLE_NAME}` (`record_uid`)"
+          },
+          {
+            "name": "index_usage_records_study_id_is_synced",
+            "unique": false,
+            "columnNames": [
+              "study_id",
+              "is_synced"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_usage_records_study_id_is_synced` ON `${TABLE_NAME}` (`study_id`, `is_synced`)"
+          }
+        ]
+      },
+      {
+        "tableName": "app_usage_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `datetime_str` TEXT NOT NULL, `device_id` TEXT NOT NULL, `package_name` TEXT NOT NULL, `app_name` TEXT NOT NULL, `uid` INTEGER NOT NULL, `bytes_rx` INTEGER NOT NULL, `bytes_tx` INTEGER NOT NULL, `bytes_total` INTEGER NOT NULL, `network_type` TEXT NOT NULL, `query_start` TEXT NOT NULL, `start_time` TEXT NOT NULL, `end_time` TEXT NOT NULL, `is_system_app` INTEGER NOT NULL, `utc_offset_minutes` INTEGER NOT NULL DEFAULT 480, `is_synced` INTEGER NOT NULL, `measurement_status` TEXT NOT NULL DEFAULT 'LEGACY', `collection_version` TEXT NOT NULL DEFAULT 'legacy', `schema_version` INTEGER NOT NULL DEFAULT 0, `study_id` TEXT NOT NULL DEFAULT '', `record_uid` TEXT NOT NULL DEFAULT '')",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "datetimeStr",
+            "columnName": "datetime_str",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceId",
+            "columnName": "device_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "packageName",
+            "columnName": "package_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appName",
+            "columnName": "app_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesRx",
+            "columnName": "bytes_rx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesTx",
+            "columnName": "bytes_tx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesTotal",
+            "columnName": "bytes_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "networkType",
+            "columnName": "network_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queryStart",
+            "columnName": "query_start",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startTime",
+            "columnName": "start_time",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endTime",
+            "columnName": "end_time",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isSystemApp",
+            "columnName": "is_system_app",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "utcOffsetMinutes",
+            "columnName": "utc_offset_minutes",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "480"
+          },
+          {
+            "fieldPath": "isSynced",
+            "columnName": "is_synced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "measurementStatus",
+            "columnName": "measurement_status",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'LEGACY'"
+          },
+          {
+            "fieldPath": "collectionVersion",
+            "columnName": "collection_version",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'legacy'"
+          },
+          {
+            "fieldPath": "schemaVersion",
+            "columnName": "schema_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "studyId",
+            "columnName": "study_id",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "recordUid",
+            "columnName": "record_uid",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_app_usage_records_record_uid",
+            "unique": true,
+            "columnNames": [
+              "record_uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_app_usage_records_record_uid` ON `${TABLE_NAME}` (`record_uid`)"
+          },
+          {
+            "name": "index_app_usage_records_study_id_is_synced",
+            "unique": false,
+            "columnNames": [
+              "study_id",
+              "is_synced"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_app_usage_records_study_id_is_synced` ON `${TABLE_NAME}` (`study_id`, `is_synced`)"
+          }
+        ]
+      },
+      {
+        "tableName": "device_identity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `current_device_id` TEXT NOT NULL, `previous_device_id` TEXT, `hardware_id` TEXT NOT NULL, `device_model` TEXT NOT NULL, `network_provider` TEXT NOT NULL DEFAULT 'Unknown', `linked_at` INTEGER NOT NULL, `is_synced` INTEGER NOT NULL DEFAULT 0)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "current_device_id",
+            "columnName": "current_device_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "previous_device_id",
+            "columnName": "previous_device_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "hardware_id",
+            "columnName": "hardware_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "device_model",
+            "columnName": "device_model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "network_provider",
+            "columnName": "network_provider",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'Unknown'"
+          },
+          {
+            "fieldPath": "linked_at",
+            "columnName": "linked_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "is_synced",
+            "columnName": "is_synced",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_device_identity_hardware_id",
+            "unique": false,
+            "columnNames": [
+              "hardware_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_device_identity_hardware_id` ON `${TABLE_NAME}` (`hardware_id`)"
+          },
+          {
+            "name": "index_device_identity_current_device_id",
+            "unique": false,
+            "columnNames": [
+              "current_device_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_device_identity_current_device_id` ON `${TABLE_NAME}` (`current_device_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "collection_checkpoint",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `mobile_rx` INTEGER NOT NULL, `mobile_tx` INTEGER NOT NULL, `last_tick_elapsed` INTEGER NOT NULL, `last_tick_wall` INTEGER NOT NULL, `counter_elapsed` INTEGER NOT NULL DEFAULT -1, `counter_wall` INTEGER NOT NULL DEFAULT -1, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mobileRx",
+            "columnName": "mobile_rx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mobileTx",
+            "columnName": "mobile_tx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastTickElapsed",
+            "columnName": "last_tick_elapsed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastTickWall",
+            "columnName": "last_tick_wall",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "counterElapsed",
+            "columnName": "counter_elapsed",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "-1"
+          },
+          {
+            "fieldPath": "counterWall",
+            "columnName": "counter_wall",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "-1"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "app_usage_baseline",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` INTEGER NOT NULL, `transport` TEXT NOT NULL, `anchor` INTEGER NOT NULL, `rx` INTEGER NOT NULL, `tx` INTEGER NOT NULL, `taken_at` INTEGER NOT NULL, PRIMARY KEY(`uid`, `transport`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transport",
+            "columnName": "transport",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchor",
+            "columnName": "anchor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rx",
+            "columnName": "rx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tx",
+            "columnName": "tx",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "takenAt",
+            "columnName": "taken_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "transport"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd6e243a386384b5c6b0482de546b1be7')"
+    ]
+  }
+}

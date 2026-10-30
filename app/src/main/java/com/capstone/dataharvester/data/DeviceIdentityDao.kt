@@ -19,6 +19,10 @@ interface DeviceIdentityDao {
     @Query("UPDATE device_identity SET is_synced = 1 WHERE id IN (:ids)")
     suspend fun markAsSynced(ids: List<Int>)
     
+    /** Send the identity again, e.g. so the cloud row picks up a new study enrollment. */
+    @Query("UPDATE device_identity SET is_synced = 0")
+    suspend fun markAllUnsynced()
+
     @Query("DELETE FROM device_identity")
     suspend fun clearAll()
 }

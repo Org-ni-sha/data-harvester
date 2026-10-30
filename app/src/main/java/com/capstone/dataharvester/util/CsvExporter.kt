@@ -45,13 +45,13 @@ class CsvExporter(private val context: Context) {
             "cumulative_mb_today,network_type,screen_on,battery_level," +
             "device_id,signal_strength,is_charging,device_model,network_operator,utc_offset_minutes," +
             "interval_start,interval_end,elapsed_ms,measurement_status,active_network_at_sample," +
-            "collection_version,record_uid"
+            "collection_version,record_uid,study_id,schema_version"
 
         // Per-app CSV Header
         private const val APP_CSV_HEADER =
             "id,timestamp,datetime,device_id,package_name,app_name," +
             "uid,bytes_rx,bytes_tx,bytes_total,network_type,query_start,start_time,end_time,is_system_app,utc_offset_minutes," +
-            "measurement_status,collection_version,record_uid"
+            "measurement_status,collection_version,record_uid,study_id,schema_version"
     }
 
     // ─── Public API ───────────────────────────────────────────────────────
@@ -306,7 +306,9 @@ class CsvExporter(private val context: Context) {
             quote(r.measurementStatus),
             quote(r.activeNetworkAtSample),
             quote(r.collectionVersion),
-            quote(r.recordUid)
+            quote(r.recordUid),
+            quote(r.studyId),
+            r.schemaVersion.toString()
         ).joinToString(",")
     }
 
@@ -333,7 +335,9 @@ class CsvExporter(private val context: Context) {
             r.utcOffsetMinutes.toString(),
             quote(r.measurementStatus),
             quote(r.collectionVersion),
-            quote(r.recordUid)
+            quote(r.recordUid),
+            quote(r.studyId),
+            r.schemaVersion.toString()
         ).joinToString(",")
     }
 

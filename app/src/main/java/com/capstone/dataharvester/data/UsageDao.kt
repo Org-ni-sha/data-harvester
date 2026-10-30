@@ -46,19 +46,24 @@ interface UsageDao {
     @Query("DELETE FROM usage_records")
     suspend fun deleteAll()
 
-    /** Get records that haven't been synced to the backend yet in batches. */
-    @Query("SELECT * FROM usage_records WHERE is_synced = 0 ORDER BY id ASC LIMIT :limit")
-    suspend fun getUnsyncedBatch(limit: Int): List<UsageRecord>
+    /** Get records of [studyId] that haven't been synced to the backend yet in batches. */
+    @Query("SELECT * FROM usage_records WHERE is_synced = 0 AND study_id = :studyId ORDER BY id ASC LIMIT :limit")
+    suspend fun getUnsyncedBatch(studyId: String, limit: Int): List<UsageRecord>
 
     /** Mark records as synced after successful backend upload. */
     @Query("UPDATE usage_records SET is_synced = 1 WHERE id IN (:ids)")
     suspend fun markAsSynced(ids: List<Int>)
 
-    /** Number of records not yet uploaded (shown before a reset). */
-    @Query("SELECT COUNT(*) FROM usage_records WHERE is_synced = 0")
-    suspend fun countUnsynced(): Int
+    /** Number of [studyId] records not yet uploaded (shown before a reset). */
+    @Query("SELECT COUNT(*) FROM usage_records WHERE is_synced = 0 AND study_id = :studyId")
+    suspend fun countUnsynced(studyId: String): Int
+
 
     /** Mark records the server confirmed, by their per-row upload key. */
     @Query("UPDATE usage_records SET is_synced = 1 WHERE record_uid IN (:recordUids)")
     suspend fun markAsSyncedByRecordUid(recordUids: List<String>)
+
+    /** Rows the server refused as invalid: kept here and in exports, never resent (is_synced = 2). */
+    @Query("UPDATE usage_records SET is_synced = 2 WHERE record_uid IN (:recordUids)")
+    suspend fun markRejectedByRecordUid(recordUids: List<String>)
 }

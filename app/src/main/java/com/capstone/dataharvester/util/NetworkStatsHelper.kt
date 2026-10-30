@@ -36,6 +36,9 @@ class NetworkStatsHelper(private val context: Context) {
         private const val TAG = "NetworkStatsHelper"
         const val DAY_MS = 86_400_000L
 
+        /** package_name of the per-app row for data shared through the phone's hotspot (uid -5) */
+        const val HOTSPOT_PACKAGE = "hotspot"
+
         /** UTC midnight at or before [time]: a multiple of every NetworkStats bucket length. */
         // Kotlin's mod, not Math.floorMod(long, long): that is API 24 and minSdk is 23
         fun utcMidnight(time: Long): Long = time - time.mod(DAY_MS)
@@ -132,10 +135,9 @@ class NetworkStatsHelper(private val context: Context) {
                     // Skip entries with zero usage
                     if (bucket.rxBytes == 0L && bucket.txBytes == 0L) continue
 
-                    // Skip removed apps (UID_REMOVED) and tethering (UID_TETHERING)
-                    if (uid == NetworkStats.Bucket.UID_REMOVED ||
-                        uid == NetworkStats.Bucket.UID_TETHERING
-                    ) continue
+                    // Skip removed apps (UID_REMOVED). Tethering (UID_TETHERING) is kept: it is
+                    // data this phone shared through its hotspot, recorded as its own row
+                    if (uid == NetworkStats.Bucket.UID_REMOVED) continue
 
                     val sum = totals.getOrPut(uid) { LongArray(2) }
                     sum[0] += bucket.rxBytes
@@ -172,7 +174,7 @@ class NetworkStatsHelper(private val context: Context) {
     /**
      * Resolve a Linux UID to package name, app label, and system app flag.
      *
-     * Resolution strategy (5 layers):
+     * Resolution strategy (5 layers, after the hotspot pseudo-UID):
      *  1. Known Android system UIDs (0=root, 1000=android, 1001=phone…)
      *  2. Isolated process UID range (90000–99999) — always unresolvable by design
      *  3. PackageManager.getPackagesForUid() — the primary path for user apps
@@ -180,6 +182,17 @@ class NetworkStatsHelper(private val context: Context) {
      *  5. Last-resort: record package name even if ApplicationInfo lookup fails
      */
     private fun resolveUid(uid: Int): ResolvedAppInfo {
+
+        // ── Hotspot: traffic of other devices using this phone's hotspot ────
+        // Already counted in the phone's mobile totals (usage_records); this row says
+        // how much of it was shared. Filter on package_name = 'hotspot'.
+        if (uid == NetworkStats.Bucket.UID_TETHERING) {
+            return ResolvedAppInfo(
+                packageName = HOTSPOT_PACKAGE,
+                appName     = "Hotspot (tethering)",
+                isSystemApp = false
+            )
+        }
 
         // ── Layer 1: Known Android system UIDs ──────────────────────────────
         val knownSystemUids = mapOf(

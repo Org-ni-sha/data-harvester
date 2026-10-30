@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.capstone.dataharvester.util.StudyManager
 
 /**
  * Room database for the Data Harvester app.
@@ -28,6 +29,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  *         repairs is_synced on installs upgraded from v1-v8; dropped promo_records (unused)
  *  - v11: collection_checkpoint + app_usage_baseline tables (checkpoints committed with
  *         their rows); interval/quality columns, record_uid and collection_version
+ *  - v12: study_id and schema_version on both record tables (only rows of the enrolled
+ *         study are uploaded);
+ *         counter_elapsed / counter_wall on collection_checkpoint
+ *  - v13: rows already on the phone join the official study (every row collected by
+ *         app 1.6.1 or later belongs to it); no schema change
  */
 @Database(
     entities = [
@@ -37,7 +43,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CollectionCheckpoint::class,
         AppUsageBaseline::class
     ],
-    version = 11,
+    version = AppDatabase.VERSION,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -49,6 +55,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun appUsageBaselineDao(): AppUsageBaselineDao
 
     companion object {
+        /**
+         * Schema version. Raising it needs a MIGRATION_<old>_<new> in [ALL_MIGRATIONS]:
+         * MigrationCoverageTest (run by publishUpdate) fails otherwise.
+         */
+        const val VERSION = 13
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -270,6 +282,7 @@ abstract class AppDatabase : RoomDatabase() {
          * is_synced is deliberately NOT touched (Option A of the cloud transition):
          * synced rows are already in DATAra_harvester and stay out of Dataharvester_v2;
          * pending rows are in neither database and upload to v2 tagged 'legacy'.
+         * (Superseded by MIGRATION_11_12: pending pre-study rows are no longer uploaded.)
          */
         // internal: exercised by MigrationTest in androidTest
         internal val MIGRATION_10_11 = object : Migration(10, 11) {
@@ -304,8 +317,83 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Migration from v11 to v12:
+         * - schema_version on both record tables: 1 for rows tagged with an app version
+         *   (1.6.3 rules), 0 for older rows; new rows get MeasurementRules.SCHEMA_VERSION.
+         * - study_id on both record tables. Every existing row gets '' (collected before
+         *   enrollment in the official study), so pending rows from older versions are
+         *   kept on the phone and in CSV exports but are never uploaded to Dataharvester_v2.
+         *   This replaces the v11 plan of uploading them tagged 'legacy'.
+         * - collection_checkpoint.counter_elapsed / counter_wall: when the byte baseline was
+         *   read, kept apart from the last tick so an UNSUPPORTED tick cannot shorten the
+         *   next row's duration. Existing checkpoints were last set by a tick, so copy it.
+         */
+        // internal: exercised by MigrationTest in androidTest
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "collection_checkpoint", "counter_elapsed", "INTEGER NOT NULL DEFAULT -1")
+                addColumnIfMissing(db, "collection_checkpoint", "counter_wall", "INTEGER NOT NULL DEFAULT -1")
+                db.execSQL(
+                    "UPDATE collection_checkpoint SET counter_elapsed = last_tick_elapsed, " +
+                        "counter_wall = last_tick_wall WHERE mobile_rx >= 0"
+                )
+
+                for (table in listOf("usage_records", "app_usage_records")) {
+                    addColumnIfMissing(db, table, "study_id", "TEXT NOT NULL DEFAULT ''")
+                    // Rows tagged with an app version came from 1.6.3's rules (schema 1)
+                    addColumnIfMissing(db, table, "schema_version", "INTEGER NOT NULL DEFAULT 0")
+                    db.execSQL("UPDATE $table SET schema_version = 1 WHERE collection_version != 'legacy'")
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS `index_${table}_study_id_is_synced` " +
+                            "ON `$table` (`study_id`, `is_synced`)"
+                    )
+                }
+            }
+        }
+
+        /**
+         * v12 → v13 (app 1.6.5): there is no separate enrollment step any more; every row
+         * collected by app 1.6.1 or later belongs to the official study. Rows saved before
+         * this version (study_id '') join it. is_synced is untouched: rows already uploaded
+         * are not sent again. The identity row is sent again so the cloud copy carries the
+         * study and its start time.
+         */
+        internal val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (table in listOf("usage_records", "app_usage_records")) {
+                    db.execSQL(
+                        "UPDATE $table SET study_id = ? WHERE study_id = ''",
+                        arrayOf(StudyManager.OFFICIAL_STUDY_ID)
+                    )
+                }
+                db.execSQL("UPDATE device_identity SET is_synced = 0")
+            }
+        }
+
+        /** Every migration, oldest first. A new schema version adds its migration here. */
+        val ALL_MIGRATIONS: Array<Migration>
+            get() = arrayOf(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+                MIGRATION_6_7,
+                MIGRATION_7_8,
+                MIGRATION_8_9,
+                MIGRATION_9_10,
+                MIGRATION_10_11,
+                MIGRATION_11_12,
+                MIGRATION_12_13
+            )
+
+        /**
          * Get the singleton database instance.
          * Thread-safe via double-checked locking.
+         *
+         * Deliberately no fallbackToDestructiveMigration: a missing or broken migration
+         * must never wipe a participant's records. Open it through [DatabaseGuard], which
+         * turns that failure into a "waiting for a fixed update" state instead of a crash.
          */
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -314,20 +402,17 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "data_harvester_db"
                 )
-                    .addMigrations(
-                        MIGRATION_1_2,
-                        MIGRATION_2_3,
-                        MIGRATION_3_4,
-                        MIGRATION_4_5,
-                        MIGRATION_5_6,
-                        MIGRATION_6_7,
-                        MIGRATION_7_8,
-                        MIGRATION_8_9,
-                        MIGRATION_9_10,
-                        MIGRATION_10_11
-                    )
+                    .addMigrations(*ALL_MIGRATIONS)
                     .build()
                     .also { INSTANCE = it }
+            }
+        }
+
+        /** Closes and drops the instance, so the next [getInstance] opens the file again. */
+        fun closeInstance() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }

@@ -17,7 +17,10 @@ import java.util.UUID
  */
 @Entity(
     tableName = "app_usage_records",
-    indices = [Index(value = ["record_uid"], unique = true)]
+    indices = [
+        Index(value = ["record_uid"], unique = true),
+        Index(value = ["study_id", "is_synced"])
+    ]
 )
 data class AppUsageRecord(
 
@@ -83,17 +86,30 @@ data class AppUsageRecord(
     @ColumnInfo(name = "utc_offset_minutes", defaultValue = "480")
     val utcOffsetMinutes: Int = 480,
 
-    /** Flag indicating if this record has been synced to the backend */
+    /** 0 = pending upload, 1 = confirmed by the server, 2 = rejected by the server as invalid (kept, never resent) */
     @ColumnInfo(name = "is_synced")
     val isSynced: Boolean = false,
 
-    /** OK / COUNTER_RESET; LEGACY for rows from before v11 */
+    /** OK / COUNTER_RESET / GAP / CLOCK_ERROR; LEGACY for rows from before v11 */
     @ColumnInfo(name = "measurement_status", defaultValue = "LEGACY")
     val measurementStatus: String = "LEGACY",
 
     /** App version that collected the row; "legacy" for rows from before v11 */
     @ColumnInfo(name = "collection_version", defaultValue = "legacy")
     val collectionVersion: String = "legacy",
+
+    /**
+     * Version of the measurement rules that produced the row (MeasurementRules.SCHEMA_VERSION):
+     * 0 = before v11 (unknown rules), 1 = app 1.6.3, 2 = 1.6.4 (mobile label for any mobile
+     * byte, INTERRUPTED, per-app GAP / CLOCK_ERROR). Rules can change without the app version
+     * meaning anything to analysis, so filter or split on this instead.
+     */
+    @ColumnInfo(name = "schema_version", defaultValue = "0")
+    val schemaVersion: Int = 0,
+
+    /** Study the row was collected for; "" = before enrollment (never uploaded) */
+    @ColumnInfo(name = "study_id", defaultValue = "")
+    val studyId: String = "",
 
     /** Random per-row id: the cloud's only uniqueness key and the upload acknowledgement key */
     @ColumnInfo(name = "record_uid", defaultValue = "")
