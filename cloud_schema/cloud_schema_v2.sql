@@ -162,10 +162,3 @@ CREATE INDEX IF NOT EXISTS idx_upload_history_device_id
     ON upload_history (device_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_upload_history_batch_uid
     ON upload_history (batch_uid);
-
--- 5. Readable respondent IDs (R001...) for the manuscript; filled at export time.
-CREATE TABLE IF NOT EXISTS respondent_map (
-    device_id TEXT PRIMARY KEY,
-    respondent_id TEXT NOT NULL,
-    enrolled_at TEXT
-);

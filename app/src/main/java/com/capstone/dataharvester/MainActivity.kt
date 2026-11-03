@@ -6,12 +6,14 @@ import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.room.withTransaction
@@ -140,7 +142,7 @@ class MainActivity : AppCompatActivity() {
         
         // Every button needs the database; until it is open they only explain why not
         startButton.setOnClickListener { whenDatabaseReady { startCollection() } }
-        stopButton.setOnClickListener { whenDatabaseReady { stopCollection() } }
+        stopButton.setOnClickListener { whenDatabaseReady { confirmStopCollection() } }
         uploadButton.setOnClickListener { whenDatabaseReady { syncToCloud() } }
         exportAllButton.setOnClickListener { whenDatabaseReady { exportAllCsv() } }
         resetButton.setOnClickListener { whenDatabaseReady { confirmReset() } }
@@ -319,6 +321,50 @@ class MainActivity : AppCompatActivity() {
         val study = StudyManager(this)
         val since = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(study.enrolledAt()))
         studyText.text = "Study: ${study.studyId()} (since $since)"
+    }
+
+    /**
+     * Stop asks first: the study needs collection to run without breaks. Switching between
+     * Wi-Fi and mobile data, or turning mobile data off, is fine while it keeps running.
+     * PROCEED unlocks after a 10-second countdown so the warning is actually read.
+     */
+    private fun confirmStopCollection() {
+        val seconds = 10
+        val dialog = Dialogs.builder(this)
+            .setTitle("Keep Data Harvester running?")
+            .setMessage(
+                "This research needs Data Harvester to run non-stop. Stopping it leaves a gap " +
+                    "in our study data.\n\n" +
+                    "You do not need to stop it when you switch to Wi-Fi, turn mobile data off, " +
+                    "or use mobile data: all of that is fine as long as Data Harvester keeps running.\n\n" +
+                    "Stop collection anyway?"
+            )
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("PROCEED ($seconds)") { _, _ -> stopCollection() }
+            .setCancelable(true)
+            .create()
+
+        var timer: CountDownTimer? = null
+        dialog.setOnShowListener {
+            val proceed = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            proceed.isEnabled = false
+            proceed.alpha = 0.45f // the red danger tint hides the usual disabled look
+            timer = object : CountDownTimer(seconds * 1000L, 1000L) {
+                override fun onTick(millisUntilFinished: Long) {
+                    // Rounded up, so the label counts 10, 9, ... 1
+                    proceed.text = "PROCEED (${(millisUntilFinished + 999) / 1000})"
+                }
+
+                override fun onFinish() {
+                    proceed.text = "PROCEED"
+                    proceed.isEnabled = true
+                    proceed.alpha = 1f
+                }
+            }.start()
+        }
+        dialog.setOnDismissListener { timer?.cancel() }
+        dialog.show()
+        dialog.withDangerButton()
     }
 
     private fun stopCollection() {
