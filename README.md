@@ -79,6 +79,7 @@ Deploy the ingest endpoint (the repository root is a Vercel project). Set these 
 - **10-minute per-app collection** from NetworkStatsManager, for mobile and Wi-Fi separately.
 - **Data quality flags**: `measurement_status`, `interval_start` / `interval_end`, `elapsed_ms`, `schema_version`, and `collection_version` on every row.
 - **Reliable background running**: a foreground service, restart after reboot and app update, and a 15-minute watchdog that restarts a killed collector or asks the participant to reopen the app.
+- **Stop warning**: tapping Stop explains that the study needs collection to run non-stop (switching Wi-Fi or mobile data is fine while it runs); PROCEED unlocks after a 10-second countdown.
 - **Confirmed uploads**: rows are marked uploaded only after the server reads them back. Rejected rows are set aside with a reason instead of blocking later uploads.
 - **Verified over-the-air updates**: the app checks the size, SHA-256, package, version and signing key of a download before installing it.
 - **Safe database upgrades**: a missing or broken migration never crashes the app or erases records (see [Important notes](#important-notes)).
