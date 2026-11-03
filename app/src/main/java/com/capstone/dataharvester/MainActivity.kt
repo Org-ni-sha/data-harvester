@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var recordCountText: TextView
     private lateinit var appRecordCountText: TextView
+    private lateinit var earlierRecordsText: TextView
     private lateinit var todayUsageText: TextView
     private lateinit var lastRecordText: TextView
     private lateinit var deviceIdText: TextView
@@ -117,6 +118,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         recordCountText = findViewById(R.id.recordCountText)
         appRecordCountText = findViewById(R.id.appRecordCountText)
+        earlierRecordsText = findViewById(R.id.earlierRecordsText)
         todayUsageText = findViewById(R.id.todayUsageText)
         lastRecordText = findViewById(R.id.lastRecordText)
         deviceIdText = findViewById(R.id.deviceIdText)
@@ -550,16 +552,29 @@ class MainActivity : AppCompatActivity() {
                 val dao = db.usageDao()
                 val appDao = db.appUsageDao()
 
-                val count = withContext(Dispatchers.IO) { dao.getCount() }
-                val appCount = withContext(Dispatchers.IO) { appDao.getCount() }
+                // Study records only (from the study start on): these are the rows that
+                // belong in Dataharvester_v2, so they match the cloud plus pending uploads.
+                // Older rows (previous app versions) are counted on their own line.
+                val since = StudyManager.STUDY_START_MS
+                val count = withContext(Dispatchers.IO) { dao.countSince(since) }
+                val appCount = withContext(Dispatchers.IO) { appDao.countSince(since) }
+                val earlier = withContext(Dispatchers.IO) { dao.getCount() } - count
+                val appEarlier = withContext(Dispatchers.IO) { appDao.getCount() } - appCount
                 val last = withContext(Dispatchers.IO) { dao.getLast() }
 
                 val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val todayMb = withContext(Dispatchers.IO) { dao.getTodaySum(dateStr) }
                 
-                // Records currently stored on this phone only (not the cloud total)
                 recordCountText.text = "%,d".format(count)
                 appRecordCountText.text = "%,d".format(appCount)
+                if (earlier + appEarlier > 0) {
+                    earlierRecordsText.text = ("Not counted: %,d records and %,d app records from before " +
+                        "the study (before Oct 29), saved by an older app version. They stay on this " +
+                        "phone and in Export CSV.").format(earlier, appEarlier)
+                    earlierRecordsText.visibility = View.VISIBLE
+                } else {
+                    earlierRecordsText.visibility = View.GONE
+                }
                 
                 todayUsageText.text = "%.1f MB".format(todayMb)
                 lastRecordText.text = if (last != null) {

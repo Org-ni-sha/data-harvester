@@ -31,6 +31,10 @@ interface UsageDao {
     @Query("SELECT COUNT(*) FROM usage_records")
     suspend fun getCount(): Int
 
+    /** Records collected at or after [since] (epoch millis), e.g. the study start. */
+    @Query("SELECT COUNT(*) FROM usage_records WHERE timestamp >= :since")
+    suspend fun countSince(since: Long): Int
+
     /**
      * Get sum of mb_used for today.
      * @param datePrefix Date string prefix in "yyyy-MM-dd" format

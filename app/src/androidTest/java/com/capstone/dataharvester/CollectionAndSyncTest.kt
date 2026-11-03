@@ -125,6 +125,25 @@ class CollectionAndSyncTest {
         assertEquals("Hotspot (tethering)", app.appName)
     }
 
+    @Test
+    fun dashboardCounts_onlyStudyRows_olderRowsSeparately() = runBlocking {
+        // Like the Infinix X6880 export: older rows (Oct 6-22, previous app versions) plus study rows
+        val start = StudyManager.STUDY_START_MS
+        for ((ts, n) in listOf(start - 7 * 86_400_000L to 3, start - 1 to 1, start to 1, start + 3_600_000L to 4)) {
+            repeat(n) {
+                db.usageDao().insert(
+                    UsageRecord(
+                        timestamp = ts, datetimeStr = "x", hour = 0, minute = 0, dayOfWeek = 1, isWeekend = 0,
+                        timePeriod = "Night", bytesRx = 1, bytesTx = 1, bytesTotal = 2, mbUsed = 0.0,
+                        cumulativeMbToday = 0.0, networkType = "LTE", screenOn = 1, batteryLevel = 50, studyId = study
+                    )
+                )
+            }
+        }
+        assertEquals(9, db.usageDao().getCount())
+        assertEquals("study rows: from the start on", 5, db.usageDao().countSince(start))
+    }
+
     // ── upload ─────────────────────────────────────────────────────────────
 
     /** Records every batch; answers with [respond] (default: confirm everything). */
