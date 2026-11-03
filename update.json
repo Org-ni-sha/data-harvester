@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 11,
-  "latestVersionName": "1.6.5",
-  "apkUrl": "https://github.com/Org-ni-sha/data-harvester/releases/download/v1.6.5/DataHarvester-1.6.5.apk",
-  "sizeBytes": 9120956,
-  "sha256": "495b5d6992768c71ef46c83027b08949cabdf9b7245b377209de1609b44718eb",
+  "latestVersionCode": 12,
+  "latestVersionName": "1.6.6",
+  "apkUrl": "https://github.com/Org-ni-sha/data-harvester/releases/download/v1.6.6/DataHarvester-1.6.6.apk",
+  "sizeBytes": 9123468,
+  "sha256": "076b9b88ff0cf994f7d8af26dcf8e01a5ed10cd8c963506a869db658198ce79e",
   "signingCertSha256": "ab1f26de5fc8dc7fa17a43bab477d060e09e62a042f5b3473395e6de2c22f481"
 }
