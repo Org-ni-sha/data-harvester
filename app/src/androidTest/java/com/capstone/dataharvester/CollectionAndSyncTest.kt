@@ -44,6 +44,7 @@ class CollectionAndSyncTest {
     fun setUp() {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
         context.getSharedPreferences("study_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("sync_prefs", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     @After
@@ -227,6 +228,30 @@ class CollectionAndSyncTest {
         transport.batches.clear()
         CloudSyncManager(context, db, transport).syncPendingData()
         assertTrue(transport.batches.none { b -> b.usage.any { it["record_uid"] == uids[0] } })
+    }
+
+    @Test
+    fun afterAnAppUpdate_theIdentityIsSentOnceWithTheNewVersion() = runBlocking {
+        // Identity already uploaded, and last confirmed by an older app version
+        db.deviceIdentityDao().insert(
+            DeviceIdentity(
+                current_device_id = "d", previous_device_id = null, hardware_id = "d",
+                device_model = "m", linked_at = 1, is_synced = 1
+            )
+        )
+        context.getSharedPreferences("sync_prefs", Context.MODE_PRIVATE).edit()
+            .putString("identity_app_version", "1.6.5").commit()
+        val transport = FakeTransport()
+
+        CloudSyncManager(context, db, transport).syncPendingData()
+        val sent = transport.batches.mapNotNull { it.identity }
+        assertEquals(1, sent.size)
+        assertEquals(com.capstone.dataharvester.BuildConfig.VERSION_NAME, sent[0]["app_version"])
+
+        // Same version again: nothing to re-send
+        transport.batches.clear()
+        CloudSyncManager(context, db, transport).syncPendingData()
+        assertTrue(transport.batches.none { it.identity != null })
     }
 
     @Test

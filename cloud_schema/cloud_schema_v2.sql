@@ -58,15 +58,16 @@ CREATE TABLE IF NOT EXISTS usage_records (
     interval_start INTEGER NOT NULL DEFAULT 0,
     interval_end INTEGER NOT NULL DEFAULT 0,
     elapsed_ms INTEGER NOT NULL DEFAULT -1,
-    -- OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP / INTERRUPTED / LEGACY
+    -- OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP / INTERRUPTED / COUNTER_JUMP (1.6.7) / LEGACY
     measurement_status TEXT NOT NULL DEFAULT 'LEGACY',
     -- raw active network at the tick; network_type is the cleaning label
     active_network_at_sample TEXT NOT NULL DEFAULT '',
     -- app version that collected the row; 'legacy' = before 1.6.3
     collection_version TEXT NOT NULL DEFAULT 'legacy',
     -- measurement rules version (MeasurementRules.SCHEMA_VERSION): 0 = 1.6.1 ('legacy'),
-    -- 1 = 1.6.3 (the DEFAULT: 1.6.3 does not send it), 2 = 1.6.5 (mobile label for any
-    -- mobile byte, INTERRUPTED, per-app GAP)
+    -- 1 = 1.6.3 (the DEFAULT: 1.6.3 does not send it), 2 = 1.6.5-1.6.6 (mobile label for any
+    -- mobile byte, INTERRUPTED, per-app GAP), 3 = 1.6.7 (COUNTER_JUMP; a counter that
+    -- falls while mobile data is off keeps its baseline)
     schema_version INTEGER NOT NULL DEFAULT 1,
     -- official study the row belongs to
     study_id TEXT NOT NULL DEFAULT 'dataharvester_v2'

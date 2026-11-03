@@ -125,7 +125,12 @@ data class UsageRecord(
     @ColumnInfo(name = "elapsed_ms", defaultValue = "-1")
     val elapsedMs: Long = -1L,
 
-    /** OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP / INTERRUPTED; LEGACY for rows from before v11 */
+    /**
+     * OK / BASELINE / COUNTER_RESET / UNSUPPORTED / GAP / INTERRUPTED / COUNTER_JUMP;
+     * LEGACY for rows from before v11. COUNTER_JUMP (1.6.7, schema_version 3): the counter
+     * rose faster than any real connection (PrimaryTick.MAX_PLAUSIBLE_BYTES_PER_SECOND), so
+     * the row holds 0 bytes and the counter was re-baselined.
+     */
     @ColumnInfo(name = "measurement_status", defaultValue = "LEGACY")
     val measurementStatus: String = "LEGACY",
 

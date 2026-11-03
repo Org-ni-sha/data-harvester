@@ -141,11 +141,6 @@ class GatewayTransport(
         val usageUids = batch.usage.map { it["record_uid"] as String }
         val appUids = batch.app.map { it["record_uid"] as String }
 
-        // Rows the server already holds (a retry after a lost response): the history
-        // then counts only rows this batch really added
-        val alreadyThere = fetchExisting("usage_records", usageUids).size +
-            fetchExisting("app_usage_records", appUids).size
-
         val sql = StringBuilder()
         batch.usage.forEach { sql.append(insertOrIgnore("usage_records", it)).append('\n') }
         batch.app.forEach { sql.append(insertOrIgnore("app_usage_records", it)).append('\n') }
@@ -168,17 +163,14 @@ class GatewayTransport(
         } ?: false
 
         if (batch.recordCount > 0) {
-            val confirmed = ackedUsage.size + ackedApp.size
-            val history = linkedMapOf<String, Any>(
-                "batch_uid" to CloudSyncManager.batchUid(usageUids + appUids),
-                "device_id" to batch.deviceId,
-                "uploaded_timestamp" to System.currentTimeMillis(),
-                "records_uploaded" to (confirmed - alreadyThere).coerceAtLeast(0),
-                "records_attempted" to batch.recordCount,
-                "records_confirmed" to confirmed,
-                "payload_size_bytes" to payloadSize,
-                "payload_size_kb" to payloadSize / 1024.0,
-                "app_version" to batch.appVersion
+            val history = UploadPayload.uploadHistory(
+                batchUid = CloudSyncManager.batchUid(usageUids + appUids),
+                deviceId = batch.deviceId,
+                uploadedAt = System.currentTimeMillis(),
+                attempted = batch.recordCount,
+                confirmed = ackedUsage.size + ackedApp.size,
+                payloadSizeBytes = payloadSize,
+                appVersion = batch.appVersion
             )
             try {
                 postSql(insertOrIgnore("upload_history", history))

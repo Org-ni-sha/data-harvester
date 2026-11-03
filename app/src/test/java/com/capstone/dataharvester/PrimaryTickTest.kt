@@ -101,6 +101,57 @@ class PrimaryTickTest {
         assertEquals(0L, t.bytesTotal)
     }
 
+    // ── 1.6.7: mobile interface down/up and impossible jumps ─────────────────
+
+    @Test
+    fun mobileDataDropsThenComesBack_noBigDelta_onlyRealUsageCounted() {
+        // 6 GB since boot; mobile data goes off (counters fall to 0), then comes back
+        val gb6 = 6L * 1024 * 1024 * 1024
+        val base = tick(CollectionCheckpoint(), gb6, 100, 100_000).checkpoint
+        val down = tick(base, 0, 0, 130_000)
+        assertEquals("COUNTER_RESET", down.status)
+        assertEquals(0L, down.bytesTotal)
+        assertEquals(gb6, down.checkpoint.mobileRx)                  // baseline kept, not lowered
+        assertEquals(100_000L, down.checkpoint.counterElapsed)
+
+        // Interface back: counter returns to the full value plus 2 MB of real usage
+        val back = tick(down.checkpoint, gb6 + 2_000_000, 100, 160_000)
+        assertEquals(2_000_000L, back.bytesTotal)                     // not 6 GB
+        assertEquals("INTERRUPTED", back.status)                     // the span had a dropped reading
+        assertEquals(60_000L, back.elapsedMs)
+        assertEquals("OK", tick(back.checkpoint, gb6 + 2_100_000, 100, 190_000).status)
+    }
+
+    @Test
+    fun counterStaysLowPastTheHold_isAcceptedAsATrueReset() {
+        val base = tick(CollectionCheckpoint(), 5_000_000, 0, 100_000).checkpoint
+        val low = tick(base, 1_000, 0, 100_000 + PrimaryTick.COUNTER_DROP_HOLD_MS + 1)
+        assertEquals("COUNTER_RESET", low.status)
+        assertEquals(1_000L, low.checkpoint.mobileRx)                 // re-baselined at the low value
+        assertEquals("OK", tick(low.checkpoint, 2_000, 0, 100_000 + PrimaryTick.COUNTER_DROP_HOLD_MS + 30_001).status)
+    }
+
+    @Test
+    fun overCeilingJump_isFlagged_notCounted_andRebaselined() {
+        // 6,333 MB in 7 s, as in the official data
+        val jump = tick(first.checkpoint, 1_000 + 6_333L * 1024 * 1024, 100, 107_000)
+        assertEquals("COUNTER_JUMP", jump.status)
+        assertEquals(0L, jump.bytesTotal)
+        assertEquals(1_000L + 6_333L * 1024 * 1024, jump.checkpoint.mobileRx)
+        // The next ordinary tick counts normally from the new baseline
+        val next = tick(jump.checkpoint, 1_000 + 6_333L * 1024 * 1024 + 500, 100, 137_000)
+        assertEquals("OK", next.status)
+        assertEquals(500L, next.bytesTotal)
+    }
+
+    @Test
+    fun heavyButRealUsage_underTheCeiling_staysOk() {
+        // 900 MB in 30 s = 30 MB/s (about 250 Mbit/s): a fast 5G download, not an artifact
+        val t = tick(first.checkpoint, 1_000 + 900L * 1024 * 1024, 100, 130_000)
+        assertEquals("OK", t.status)
+        assertEquals(900L * 1024 * 1024, t.bytesTotal)
+    }
+
     @Test
     fun crashBeforeCommit_nextTickCountsTheBytesExactlyOnce() {
         // A tick at 130 s computed 500 bytes but the process died before the commit, so the

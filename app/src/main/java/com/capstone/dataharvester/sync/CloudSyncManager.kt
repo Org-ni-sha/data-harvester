@@ -25,6 +25,11 @@ class CloudSyncManager(
         private const val TAG = "SyncManager"
         const val BATCH_SIZE = 2000
 
+        private const val PREFS_NAME = "sync_prefs"
+
+        /** App version the cloud device_identity row was last confirmed with */
+        private const val KEY_IDENTITY_APP_VERSION = "identity_app_version"
+
         /**
          * Held for a whole sync run. The manual upload, SyncWorker and Reset all take it,
          * so two uploads never send the same rows and Reset never deletes mid-upload.
@@ -76,6 +81,13 @@ class CloudSyncManager(
         val appUsageDao = db.appUsageDao()
         val identityDao = db.deviceIdentityDao()
 
+        // After an app update the cloud identity still names the old version: send it again
+        // (the server upserts it), and remember the version only once the server confirms it
+        val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        if (prefs.getString(KEY_IDENTITY_APP_VERSION, null) != appVersion) {
+            identityDao.markAllUnsynced()
+        }
+
         var totalUsage = 0
         var totalApp = 0
         var identityPending = true
@@ -122,6 +134,7 @@ class CloudSyncManager(
                 rejectedApp.chunked(500).forEach { appUsageDao.markRejectedByRecordUid(it) }
                 if (ack.identityConfirmed && identities.isNotEmpty()) {
                     identityDao.markAsSynced(identities.map { it.id })
+                    prefs.edit().putString(KEY_IDENTITY_APP_VERSION, appVersion).apply()
                 }
             }
             totalUsage += ackedUsage.size

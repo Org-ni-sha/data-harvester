@@ -3,6 +3,10 @@ package com.capstone.dataharvester.sync
 import com.capstone.dataharvester.data.AppUsageRecord
 import com.capstone.dataharvester.data.DeviceIdentity
 import com.capstone.dataharvester.data.UsageRecord
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * The cloud columns of each uploaded row, in one place: the ingest endpoint receives
@@ -71,6 +75,39 @@ object UploadPayload {
     )
 
     /** One cloud row per install, keyed by the install UUID; no hardware ID is sent. */
+    /**
+     * One upload_history row. datetime_str ("yyyy-MM-dd'T'HH:mm:ss") and datetime_stamp
+     * ("yyyy-MM-dd HH:mm:ss") are uploadedAt in the phone's time zone, exactly as 1.6.3
+     * wrote them (1.6.4-1.6.6 left them empty). records_uploaded is the number of records
+     * the server confirmed it holds, the same as records_confirmed.
+     */
+    fun uploadHistory(
+        batchUid: String,
+        deviceId: String,
+        uploadedAt: Long,
+        attempted: Int,
+        confirmed: Int,
+        payloadSizeBytes: Int,
+        appVersion: String,
+        zone: TimeZone = TimeZone.getDefault()
+    ): LinkedHashMap<String, Any> {
+        fun format(pattern: String) =
+            SimpleDateFormat(pattern, Locale.US).apply { timeZone = zone }.format(Date(uploadedAt))
+        return linkedMapOf(
+            "batch_uid" to batchUid,
+            "device_id" to deviceId,
+            "uploaded_timestamp" to uploadedAt,
+            "datetime_str" to format("yyyy-MM-dd'T'HH:mm:ss"),
+            "datetime_stamp" to format("yyyy-MM-dd HH:mm:ss"),
+            "records_uploaded" to confirmed,
+            "records_attempted" to attempted,
+            "records_confirmed" to confirmed,
+            "payload_size_bytes" to payloadSizeBytes,
+            "payload_size_kb" to payloadSizeBytes / 1024.0,
+            "app_version" to appVersion
+        )
+    }
+
     fun identity(r: DeviceIdentity, appVersion: String, studyId: String, enrolledAt: Long): LinkedHashMap<String, Any> =
         linkedMapOf(
             "device_id" to r.current_device_id,
