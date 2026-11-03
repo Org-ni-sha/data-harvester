@@ -19,7 +19,8 @@ Records are uploaded automatically to the study database (`Dataharvester_v2` on 
 
 | Version | versionCode | Main changes |
 |---|---|---|
-| **1.6.6** | 12 | Dashboard RECORDS / APP RECORDS count only study rows (from 2026-10-29), so they match the cloud plus pending uploads; rows from older app versions are shown on their own line |
+| **1.6.7** | 13 | Counter jumps (impossible TrafficStats deltas) recorded as `COUNTER_JUMP` with 0 bytes; a counter that falls while mobile data is off keeps its baseline, so the return is not counted as usage; `schema_version` 3; upload_history dates filled again and `records_uploaded` = confirmed; device_identity app_version updated after an app update |
+| 1.6.6 | 12 | Dashboard RECORDS / APP RECORDS count only study rows (from 2026-10-29), so they match the cloud plus pending uploads; rows from older app versions are shown on their own line |
 | 1.6.5 | 11 | Hotspot usage recorded as its own per-app row (`package_name = 'hotspot'`); every row from 1.6.1 onward belongs to the official study (no separate enrollment step); plus everything planned for 1.6.4 (never released) |
 | 1.6.4 | 10 | Not released. Checkpoint and counter fixes; per-app GAP flags; uploads through the ingest endpoint (no database key in the APK); per-row server validation; watchdog that restarts a killed collector; signed releases with verified in-app updates; update installs through Android's PackageInstaller; database guard (a missing migration pauses the app instead of crashing or erasing records) |
 | 1.6.3 | 9 | Collection, sync and cloud-transition fixes (record_uid, measurement_status, collection_version) |

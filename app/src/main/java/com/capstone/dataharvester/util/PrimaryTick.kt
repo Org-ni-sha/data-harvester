@@ -13,6 +13,24 @@ object PrimaryTick {
     /** Wall-clock vs. elapsedRealtime drift above this between two ticks = reboot */
     const val BOOT_TIME_TOLERANCE_MS = 60_000L
 
+    /**
+     * Highest believable mobile throughput: 100 MiB/s (about 840 Mbit/s), above the peak
+     * 5G speeds measured on Philippine networks and far above LTE. A tick above this is not
+     * usage but a counter artifact (the official data had rows of 6-26 GB in 2-15 s): it is
+     * recorded as COUNTER_JUMP with 0 bytes and the counter is re-baselined.
+     */
+    const val MAX_PLAUSIBLE_BYTES_PER_SECOND = 100L * 1024 * 1024
+
+    /**
+     * TrafficStats' mobile counters only sum the mobile interfaces that are up, so they fall
+     * when mobile data drops (network NONE) and return to the full cumulative value when it
+     * comes back. A fall without a reboot is therefore held for up to this long: the old
+     * baseline and its time are kept (0 bytes, COUNTER_RESET) and the first reading back at
+     * or above it counts only the real usage since. A fall that lasts longer is accepted as
+     * a true reset and re-baselined at the lower value.
+     */
+    const val COUNTER_DROP_HOLD_MS = 10 * 60_000L
+
     /** Cumulative mobile counters as read from TrafficStats; -1 = UNSUPPORTED */
     data class Counters(val rx: Long, val tx: Long) {
         val supported get() = rx >= 0 && tx >= 0
@@ -63,22 +81,43 @@ object PrimaryTick {
         }
 
         val hasBaseline = cp.mobileRx >= 0 && cp.mobileTx >= 0
+        // The bytes span from the last SUCCESSFUL counter reading, not the last tick
+        val hasCounterTime = cp.counterElapsed >= 0 && cp.counterWall > 0 && !rebooted
+        val elapsedMs = if (hasCounterTime) nowElapsed - cp.counterElapsed else -1L
+
+        // Counter fell without a reboot: most likely the mobile interface went down. Keep the
+        // baseline and its time, like a failed reading, until it comes back or the hold ends
+        val dropped = hasBaseline && !rebooted && (counters.rx < cp.mobileRx || counters.tx < cp.mobileTx)
+        if (dropped && hasCounterTime && elapsedMs < COUNTER_DROP_HOLD_MS) {
+            return Result(
+                bytesRx = 0L, bytesTx = 0L,
+                status = "COUNTER_RESET",
+                intervalStart = cp.lastTickWall,
+                elapsedMs = nowElapsed - cp.lastTickElapsed,
+                checkpoint = cp.copy(lastTickElapsed = nowElapsed, lastTickWall = nowWall)
+            )
+        }
+
+        val deltaRx = counters.rx - cp.mobileRx
+        val deltaTx = counters.tx - cp.mobileTx
+        // Unknown span (no counter time): judge it as one ordinary tick, the strict choice
+        val spanMs = (if (elapsedMs > 0) elapsedMs else MeasurementRules.COLLECTION_INTERVAL_MS).coerceAtLeast(1_000L)
+        val implausible = (deltaRx + deltaTx) > MAX_PLAUSIBLE_BYTES_PER_SECOND * spanMs / 1_000L
+
         val counterStatus = when {
             !hasBaseline -> "BASELINE"
-            rebooted || counters.rx < cp.mobileRx || counters.tx < cp.mobileTx -> "COUNTER_RESET"
+            rebooted || dropped -> "COUNTER_RESET"
+            implausible -> "COUNTER_JUMP"
             else -> "OK"
         }
         val counted = counterStatus == "OK"
 
-        // The bytes span from the last SUCCESSFUL counter reading, not the last tick
-        val hasCounterTime = cp.counterElapsed >= 0 && cp.counterWall > 0 && !rebooted
-        val elapsedMs = if (hasCounterTime) nowElapsed - cp.counterElapsed else -1L
         // A tick after the last good reading means a reading inside the span failed
         val readingsFailedInSpan = hasCounterTime && cp.lastTickElapsed != cp.counterElapsed
 
         return Result(
-            bytesRx = if (counted) counters.rx - cp.mobileRx else 0L,
-            bytesTx = if (counted) counters.tx - cp.mobileTx else 0L,
+            bytesRx = if (counted) deltaRx else 0L,
+            bytesTx = if (counted) deltaTx else 0L,
             status = MeasurementRules.primaryStatus(counterStatus, elapsedMs, readingsFailedInSpan),
             intervalStart = if (hasCounterTime) cp.counterWall else nowWall,
             elapsedMs = elapsedMs,

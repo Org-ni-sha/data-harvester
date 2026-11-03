@@ -19,7 +19,7 @@ const MIN_TIME = Date.UTC(2025, 0, 1);
 const maxTime = () => Date.now() + 24 * 3600 * 1000;
 const MAX_BYTES = 50 * 1024 ** 3; // per row; far above any 30 s / 10 min interval
 
-const USAGE_STATUS = ['OK', 'BASELINE', 'COUNTER_RESET', 'UNSUPPORTED', 'GAP', 'INTERRUPTED'];
+const USAGE_STATUS = ['OK', 'BASELINE', 'COUNTER_RESET', 'UNSUPPORTED', 'GAP', 'INTERRUPTED', 'COUNTER_JUMP'];
 const APP_STATUS = ['OK', 'COUNTER_RESET', 'GAP', 'CLOCK_ERROR'];
 const USAGE_NETWORK = ['5G', 'LTE', '3G', '2G', 'CELLULAR', 'WIFI', 'NONE', 'UNKNOWN', 'ETHERNET', 'OTHER'];
 

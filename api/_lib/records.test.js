@@ -154,8 +154,13 @@ test('ingest inserts, reads back and acknowledges every row', async () => {
   assert.equal(ack.inserted, 3);
   const row = db.prepare('SELECT network_operator, study_id, schema_version FROM usage_records LIMIT 1').get();
   assert.deepEqual({ ...row }, { network_operator: "TM's", study_id: STUDY_ID, schema_version: 2 });
-  const h = db.prepare('SELECT records_uploaded, records_attempted, records_confirmed FROM upload_history').all();
-  assert.deepEqual(h.map((r) => ({ ...r })), [{ records_uploaded: 3, records_attempted: 3, records_confirmed: 3 }]);
+  const h = db.prepare('SELECT records_uploaded, records_attempted, records_confirmed, datetime_str, datetime_stamp, uploaded_timestamp FROM upload_history').all();
+  assert.deepEqual(h.map(({ records_uploaded, records_attempted, records_confirmed }) => ({ records_uploaded, records_attempted, records_confirmed })),
+    [{ records_uploaded: 3, records_attempted: 3, records_confirmed: 3 }]);
+  // The dates 1.6.4-1.6.6 left empty, in the phone's zone (rows say utc_offset_minutes 480)
+  assert.match(h[0].datetime_str, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+  assert.equal(h[0].datetime_stamp, h[0].datetime_str.replace('T', ' '));
+  assert.equal(h[0].datetime_str, new Date(h[0].uploaded_timestamp + 480 * 60_000).toISOString().slice(0, 19));
 });
 
 test('a retry after a lost response duplicates nothing and adds no history', async () => {

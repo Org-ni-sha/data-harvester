@@ -16,7 +16,7 @@ package com.capstone.dataharvester.util
 object MeasurementRules {
 
     /** Stored as schema_version on every row; bump whenever a rule below changes meaning */
-    const val SCHEMA_VERSION = 2
+    const val SCHEMA_VERSION = 3
 
     const val COLLECTION_INTERVAL_MS = 30_000L
     const val APP_COLLECTION_INTERVAL_MS = 600_000L

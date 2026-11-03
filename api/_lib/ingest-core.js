@@ -27,8 +27,17 @@ async function existing(sql, table, uids) {
  * only record_uids that were sent AND read back, so the phone never marks a row synced
  * that the database does not hold.
  */
+/** "yyyy-MM-ddTHH:mm:ss" of epoch millis [ms] in the zone [offsetMinutes] east of UTC. */
+function localIso(ms, offsetMinutes) {
+  return new Date(ms + offsetMinutes * 60_000).toISOString().slice(0, 19);
+}
+
 async function ingest(body, sql) {
   const batch = validateBatch(body);
+  const now = Date.now();
+  // The phone's UTC offset, from its own rows (the server's clock zone means nothing to it)
+  const offsetMinutes = [...batch.usage, ...batch.app].map((r) => r.utc_offset_minutes)
+    .find((m) => Number.isInteger(m)) ?? 0;
   const usageUids = batch.usage.map((r) => r.record_uid);
   const appUids = batch.app.map((r) => r.record_uid);
 
@@ -65,8 +74,11 @@ async function ingest(body, sql) {
       await sql(insertOrIgnore('upload_history', {
         batch_uid: batchUid([...usageUids, ...appUids]),
         device_id: batch.deviceId,
-        uploaded_timestamp: Date.now(),
-        records_uploaded: Math.max(0, confirmed - before),
+        uploaded_timestamp: now,
+        // The phone's local time, as the app writes it (utc_offset_minutes of its rows)
+        datetime_str: localIso(now, offsetMinutes),
+        datetime_stamp: localIso(now, offsetMinutes).replace('T', ' '),
+        records_uploaded: confirmed,
         records_attempted: attempted,
         records_confirmed: confirmed,
         payload_size_bytes: size,
@@ -109,4 +121,4 @@ function gatewaySql({ url, apiKey, database, fetchImpl = fetch }) {
   };
 }
 
-module.exports = { ingest, gatewaySql, firstColumn };
+module.exports = { ingest, gatewaySql, firstColumn, localIso };
