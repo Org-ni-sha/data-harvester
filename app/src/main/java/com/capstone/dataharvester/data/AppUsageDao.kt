@@ -31,6 +31,10 @@ interface AppUsageDao {
     @Query("SELECT COUNT(*) FROM app_usage_records")
     suspend fun getCount(): Int
 
+    /** Records collected at or after [since] (epoch millis), e.g. the study start. */
+    @Query("SELECT COUNT(*) FROM app_usage_records WHERE timestamp >= :since")
+    suspend fun countSince(since: Long): Int
+
     /** Delete all per-app records (for testing/reset). */
     @Query("DELETE FROM app_usage_records")
     suspend fun deleteAll()

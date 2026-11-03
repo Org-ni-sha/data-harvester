@@ -22,6 +22,13 @@ class StudyManager(context: Context) {
 
         /** The official collection; matches the Dataharvester_v2 cloud database. */
         const val OFFICIAL_STUDY_ID = "dataharvester_v2"
+
+        /**
+         * Start of the official collection: 2026-10-29 00:00 (UTC+8), the day app 1.6.1 and
+         * Dataharvester_v2 began. Rows collected earlier come from older app versions and
+         * were uploaded to the previous database; the dashboard counts them separately.
+         */
+        const val STUDY_START_MS = 1_793_203_200_000L
     }
 
     private val prefs: SharedPreferences =

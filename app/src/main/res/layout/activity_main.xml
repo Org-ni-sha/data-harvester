@@ -266,6 +266,16 @@
 
                 </LinearLayout>
 
+                <!-- Records from before the study (older app versions): shown only if any -->
+                <TextView
+                    android:id="@+id/earlierRecordsText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_hint"
+                    android:visibility="gone" />
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
