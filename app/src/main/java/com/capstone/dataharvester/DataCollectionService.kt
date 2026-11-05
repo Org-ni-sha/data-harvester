@@ -1,5 +1,6 @@
 package com.capstone.dataharvester
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ServiceCompat
@@ -70,6 +72,11 @@ import java.util.Locale
  *  6. On network switch (WiFi ↔ Mobile), immediately closes the primary interval under
  *     the old network and snapshots per-app data
  *  7. Updates the persistent notification with current stats
+ *  8. A wake-up alarm (heartbeat, about every 40 s) runs a tick when the Handler timer
+ *     stalled: postDelayed() does not advance while the CPU sleeps, and some phones
+ *     (TECNO/HiOS) sleep so deeply that rows stopped for hours with the screen off
+ *  9. When a cellular network becomes available, an immediate tick re-baselines the
+ *     counters (see PrimaryTick: mobileUpAtReading), so almost no real usage is lost
  *
  * Reboot handling:
  *  - Checkpoints (counter baseline, last tick time, per-app baselines) live in Room
@@ -93,6 +100,22 @@ class DataCollectionService : Service() {
 
         // Minimum interval between network-switch-triggered collections (debounce)
         const val MIN_SWITCH_INTERVAL_MS = 5_000L // 5 seconds
+
+        /** Wake-up alarm period; a tick older than [STALE_TICK_MS] means the timer stalled */
+        private const val HEARTBEAT_MS = 40_000L
+        private const val STALE_TICK_MS = COLLECTION_INTERVAL_MS + 5_000L
+
+        /** Longest a tick may keep the CPU awake (normally well under a second) */
+        private const val TICK_WAKE_LOCK_MS = 20_000L
+
+        /** The running service, for [HeartbeatReceiver] (same process); null when stopped */
+        @Volatile
+        private var current: DataCollectionService? = null
+
+        /** Called by [HeartbeatReceiver] when the wake-up alarm fires. */
+        fun onHeartbeat() {
+            current?.heartbeat()
+        }
 
         // SharedPreferences keys
         /** True while this process runs the collection loop; read by CollectionWatchdogWorker */
@@ -118,6 +141,14 @@ class DataCollectionService : Service() {
     private lateinit var networkStatsHelper: NetworkStatsHelper
     private lateinit var deviceIdManager: DeviceIdManager
     private lateinit var prefs: SharedPreferences
+    private lateinit var wakeLock: PowerManager.WakeLock
+
+    // elapsedRealtime of the last primary / per-app tick, for the heartbeat
+    @Volatile private var lastTickElapsed = 0L
+    @Volatile private var lastAppTickElapsed = 0L
+
+    // Ticks when a cellular network becomes available (counters re-baseline at once)
+    private var cellularCallback: ConnectivityManager.NetworkCallback? = null
 
     // Track when service started (for runtime display in notification)
     private var startTimeMs: Long = 0L
@@ -165,7 +196,12 @@ class DataCollectionService : Service() {
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
-        trafficHelper = TrafficStatsHelper()
+        trafficHelper = TrafficStatsHelper(this)
+        // Reference-counted: each tick holds one acquire until its save completes
+        wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DataHarvester:tick")
+            .apply { setReferenceCounted(true) }
+        current = this
         deviceHelper = DeviceInfoHelper(this)
         networkStatsHelper = NetworkStatsHelper(this)
         deviceIdManager = DeviceIdManager(this)
@@ -239,6 +275,8 @@ class DataCollectionService : Service() {
         unregisterNetworkCallback()
         registerNetworkCallback()
 
+        scheduleHeartbeat()
+
         Log.i(TAG, "Data collection started " +
                 "(primary: ${COLLECTION_INTERVAL_MS / 1000}s, " +
                 "per-app: ${APP_COLLECTION_INTERVAL_MS / 1000}s, " +
@@ -259,8 +297,10 @@ class DataCollectionService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        current = null
         handler.removeCallbacks(collectionRunnable)
         handler.removeCallbacks(appCollectionRunnable)
+        cancelHeartbeat()
         unregisterNetworkCallback()
         serviceScope.cancel()
         if (!keepCollectingFlag) {
@@ -270,6 +310,70 @@ class DataCollectionService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // ─── Heartbeat (wake-up alarm) ─────────────────────────────────────────
+
+    private fun heartbeatIntent(): PendingIntent = PendingIntent.getBroadcast(
+        this, 0, Intent(this, HeartbeatReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    /**
+     * Inexact, allowed in Doze, no exact-alarm permission: outside Doze it fires about
+     * every 40 s; in Doze Android lets it through at most every ~9 min, still far better
+     * than the hours of silence a sleeping CPU gave.
+     */
+    private fun scheduleHeartbeat() {
+        try {
+            (getSystemService(Context.ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + HEARTBEAT_MS,
+                heartbeatIntent()
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not schedule the heartbeat alarm", e)
+        }
+    }
+
+    private fun cancelHeartbeat() {
+        try {
+            (getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(heartbeatIntent())
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not cancel the heartbeat alarm", e)
+        }
+    }
+
+    /**
+     * The alarm woke the phone (main thread). While the CPU is awake the Handler timer
+     * ticks and this does nothing; when it stalled, run the overdue ticks now and restart
+     * the timers from here.
+     */
+    private fun heartbeat() {
+        if (!isRunning) return
+        scheduleHeartbeat()
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastTickElapsed >= STALE_TICK_MS) {
+            Log.i(TAG, "Heartbeat: primary tick overdue by ${(now - lastTickElapsed) / 1000}s, ticking")
+            handler.removeCallbacks(collectionRunnable)
+            collectionRunnable.run()
+        }
+        if (now - lastAppTickElapsed >= APP_COLLECTION_INTERVAL_MS + 60_000L) {
+            handler.removeCallbacks(appCollectionRunnable)
+            appCollectionRunnable.run()
+        }
+    }
+
+    /** Keeps the CPU awake while [block] saves; released when it ends (or after the timeout). */
+    private fun launchAwake(block: suspend () -> Unit) {
+        wakeLock.acquire(TICK_WAKE_LOCK_MS)
+        serviceScope.launch {
+            try {
+                block()
+            } finally {
+                if (wakeLock.isHeld) wakeLock.release()
+            }
+        }
+    }
 
     // ─── Network Switch Detection ──────────────────────────────────────────
 
@@ -315,6 +419,35 @@ class DataCollectionService : Service() {
             cm.registerNetworkCallback(request, callback)
         }
         networkCallback = callback
+
+        registerCellularCallback(cm)
+    }
+
+    /**
+     * Ticks as soon as a cellular network becomes available, default or not. The counters
+     * jump back to the mobile interfaces' lifetime totals then; ticking at once makes that
+     * interval (COUNTER_RESET, 0 bytes) short and re-baselines before real usage starts.
+     * The callbacks Android sends for networks already up at registration are skipped.
+     */
+    private fun registerCellularCallback(cm: ConnectivityManager) {
+        val registeredAt = SystemClock.elapsedRealtime()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (SystemClock.elapsedRealtime() - registeredAt < 2_000L) return
+                Log.i(TAG, "Cellular network available, ticking to re-baseline")
+                collectData()
+            }
+        }
+        try {
+            val request = android.net.NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            cm.registerNetworkCallback(request, callback)
+            cellularCallback = callback
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not register the cellular callback", e)
+        }
     }
 
     private fun onDefaultNetworkChanged(newType: String) {
@@ -352,6 +485,14 @@ class DataCollectionService : Service() {
             }
         }
         networkCallback = null
+        cellularCallback?.let {
+            try {
+                (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to unregister cellular callback: ${e.message}")
+            }
+        }
+        cellularCallback = null
     }
 
     /**
@@ -385,7 +526,8 @@ class DataCollectionService : Service() {
      * Reads all data sources, computes features, and inserts a record.
      */
     private fun collectData(switchedFrom: String? = null) {
-        serviceScope.launch {
+        lastTickElapsed = SystemClock.elapsedRealtime()
+        launchAwake {
             try {
                 collectDataLocked(switchedFrom)
             } catch (e: SecurityException) {
@@ -500,7 +642,9 @@ class DataCollectionService : Service() {
             "Record #$count [${record.measurementStatus}${switchedFrom?.let { ", switch from $it" } ?: ""}]: " +
             "+${"%.3f".format(record.mbUsed)} MB (${record.bytesTotal} bytes, ${record.elapsedMs}ms) | " +
             "${record.networkType} (active $activeNetwork) | Signal: ${signalStrength}dBm | " +
-            "Charging: $charging | Today: ${"%.1f".format(record.cumulativeMbToday)} MB"
+            "Charging: $charging | Today: ${"%.1f".format(record.cumulativeMbToday)} MB | " +
+            "counters ${committed.tick.checkpoint.mobileRx}/${committed.tick.checkpoint.mobileTx} " +
+            "mobileUp=${committed.tick.checkpoint.mobileUpAtReading}"
         )
     }
 
@@ -514,7 +658,8 @@ class DataCollectionService : Service() {
      * failed query keeps only that transport's baseline for a retry.
      */
     private fun collectAppData() {
-        serviceScope.launch {
+        lastAppTickElapsed = SystemClock.elapsedRealtime()
+        launchAwake {
             appCollectMutex.withLock {
                 CollectionLocks.db.withLock {
                     if (!networkStatsHelper.hasUsageAccessPermission()) {

@@ -43,7 +43,16 @@ data class CollectionCheckpoint(
     val counterElapsed: Long = -1L,
 
     @ColumnInfo(name = "counter_wall", defaultValue = "-1")
-    val counterWall: Long = -1L
+    val counterWall: Long = -1L,
+
+    /**
+     * Whether a cellular network with internet was up when [mobileRx]/[mobileTx] were read:
+     * 1 = up, 0 = down, -1 = unknown (checkpoints from before 1.6.8). A baseline that was not
+     * read with mobile up is low, so its first reading with mobile up is not usage.
+     * Local only (not uploaded).
+     */
+    @ColumnInfo(name = "mobile_up_at_reading", defaultValue = "-1")
+    val mobileUpAtReading: Int = -1
 )
 
 @Dao

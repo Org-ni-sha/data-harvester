@@ -15,8 +15,12 @@ package com.capstone.dataharvester.util
  */
 object MeasurementRules {
 
-    /** Stored as schema_version on every row; bump whenever a rule below changes meaning */
-    const val SCHEMA_VERSION = 3
+    /**
+     * Stored as schema_version on every row; bump whenever a rule below changes meaning.
+     * 4 (1.6.8): the first reading with mobile up after a baseline read with mobile down is
+     * COUNTER_RESET, not usage (PrimaryTick, mobileUpAtReading).
+     */
+    const val SCHEMA_VERSION = 4
 
     const val COLLECTION_INTERVAL_MS = 30_000L
     const val APP_COLLECTION_INTERVAL_MS = 600_000L

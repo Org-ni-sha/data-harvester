@@ -213,4 +213,26 @@ class MigrationTest {
             context.deleteDatabase(name)
         }
     }
+
+    @Test
+    fun migrate13To14_existingCheckpointKeepsItsBaseline_andMobileStateIsUnknown() {
+        val name = "migration-13-14"
+        helper.createDatabase(name, 13).use { db ->
+            db.execSQL(
+                "INSERT INTO collection_checkpoint (id, mobile_rx, mobile_tx, last_tick_elapsed, last_tick_wall, " +
+                    "counter_elapsed, counter_wall) VALUES (0, 1000, 2000, 5000, 1700000000000, 5000, 1700000000000)"
+            )
+        }
+
+        val db = helper.runMigrationsAndValidate(name, 14, true, AppDatabase.MIGRATION_13_14)
+
+        db.query("SELECT mobile_rx, mobile_tx, counter_elapsed, mobile_up_at_reading FROM collection_checkpoint").use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(1000L, c.getLong(0))
+            assertEquals(2000L, c.getLong(1))
+            assertEquals(5000L, c.getLong(2))
+            // Unknown: the first tick with mobile up re-baselines instead of trusting the old reading
+            assertEquals(-1, c.getInt(3))
+        }
+    }
 }
