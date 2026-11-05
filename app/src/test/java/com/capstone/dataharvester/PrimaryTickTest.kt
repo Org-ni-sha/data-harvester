@@ -162,4 +162,75 @@ class PrimaryTickTest {
         assertEquals(800L, next.bytesTotal)
         assertEquals(60_000L, next.elapsedMs)
     }
+
+    // ── 1.6.8: mobile data down at the baseline (MIUI tears it down on Wi-Fi) ──
+
+    private fun read(cp: CollectionCheckpoint, rx: Long, tx: Long, elapsed: Long, mobileUp: Boolean): PrimaryTick.Result {
+        val (e, w) = at(elapsed)
+        return PrimaryTick.compute(cp, Counters(rx, tx, mobileUp), e, w)
+    }
+
+    @Test
+    fun baselineOnWifi_thenMobileReturns_isCounterResetNotUsage() {
+        // The POCO F3 case: baseline read on Wi-Fi with mobile down (counter low), then mobile
+        // came back and the counter jumped by 1,204,791,640 B in 28,945 ms (41 MB/s, under the
+        // COUNTER_JUMP ceiling) while NetworkStatsManager saw 23 MB
+        val onWifi = read(CollectionCheckpoint(), 5_000_000, 1_000_000, 100_000, mobileUp = false)
+        assertEquals(0, onWifi.checkpoint.mobileUpAtReading)
+        val back = read(onWifi.checkpoint, 5_000_000 + 1_100_000_000, 1_000_000 + 104_791_640, 128_945, mobileUp = true)
+        assertEquals("COUNTER_RESET", back.status)
+        assertEquals(0L, back.bytesTotal)
+        assertEquals(1, back.checkpoint.mobileUpAtReading)
+        // Re-baselined at the high value: the next tick counts only real usage
+        val next = read(back.checkpoint, 1_105_000_000 + 2_000_000, 105_791_640 + 500_000, 158_945, mobileUp = true)
+        assertEquals("OK", next.status)
+        assertEquals(2_500_000L, next.bytesTotal)
+    }
+
+    @Test
+    fun longWifiStretch_holdExpires_thenMobileReturns_isCounterReset() {
+        val up = read(CollectionCheckpoint(), 900_000_000, 90_000_000, 100_000, mobileUp = true)
+        // Mobile torn down on Wi-Fi: the counter falls; held for 10 min, then re-baselined low
+        val held = read(up.checkpoint, 1_000, 100, 130_000, mobileUp = false)
+        assertEquals("COUNTER_RESET", held.status)
+        val expired = read(held.checkpoint, 1_000, 100, 100_000 + PrimaryTick.COUNTER_DROP_HOLD_MS + 1, mobileUp = false)
+        assertEquals(1_000L, expired.checkpoint.mobileRx)
+        assertEquals(0, expired.checkpoint.mobileUpAtReading)
+        // 1.6.7 counted this return as ~990 MB of usage
+        val back = read(expired.checkpoint, 900_100_000, 90_010_000, 100_000 + PrimaryTick.COUNTER_DROP_HOLD_MS + 30_000, mobileUp = true)
+        assertEquals("COUNTER_RESET", back.status)
+        assertEquals(0L, back.bytesTotal)
+    }
+
+    @Test
+    fun shortWifiStretch_withinTheHold_stillCountsRealUsage() {
+        // Unchanged from 1.6.7: the baseline was read with mobile up and is held while it is down
+        val up = read(CollectionCheckpoint(), 900_000_000, 90_000_000, 100_000, mobileUp = true)
+        val down = read(up.checkpoint, 1_000, 100, 130_000, mobileUp = false)
+        assertEquals(1, down.checkpoint.mobileUpAtReading)
+        val back = read(down.checkpoint, 900_400_000, 90_100_000, 160_000, mobileUp = true)
+        assertEquals("INTERRUPTED", back.status) // real bytes; the held reading inside the span did not count
+        assertEquals(500_000L, back.bytesTotal)
+    }
+
+    @Test
+    fun mobileStaysDown_countsNothingAndNeverResets() {
+        val a = read(CollectionCheckpoint(), 1_000, 100, 100_000, mobileUp = false)
+        val b = read(a.checkpoint, 1_000, 100, 130_000, mobileUp = false)
+        assertEquals("OK", b.status)
+        assertEquals(0L, b.bytesTotal)
+    }
+
+    @Test
+    fun checkpointFromBefore168_firstTickWithMobileUp_isCounterReset() {
+        // MIGRATION_13_14 leaves mobile_up_at_reading = -1 (unknown): not trusted as "up"
+        val old = CollectionCheckpoint(
+            mobileRx = 1_000, mobileTx = 100, lastTickElapsed = 100_000, lastTickWall = boot + 100_000,
+            counterElapsed = 100_000, counterWall = boot + 100_000
+        )
+        val t = read(old, 2_000, 200, 130_000, mobileUp = true)
+        assertEquals("COUNTER_RESET", t.status)
+        assertEquals(0L, t.bytesTotal)
+        assertEquals("OK", read(t.checkpoint, 2_500, 200, 160_000, mobileUp = true).status)
+    }
 }

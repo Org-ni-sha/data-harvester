@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS usage_records (
     -- measurement rules version (MeasurementRules.SCHEMA_VERSION): 0 = 1.6.1 ('legacy'),
     -- 1 = 1.6.3 (the DEFAULT: 1.6.3 does not send it), 2 = 1.6.5-1.6.6 (mobile label for any
     -- mobile byte, INTERRUPTED, per-app GAP), 3 = 1.6.7 (COUNTER_JUMP; a counter that
-    -- falls while mobile data is off keeps its baseline)
+    -- falls while mobile data is off keeps its baseline), 4 = 1.6.8 (a baseline read while
+    -- mobile data was down is not compared with the next reading with it up: COUNTER_RESET)
     schema_version INTEGER NOT NULL DEFAULT 1,
     -- official study the row belongs to
     study_id TEXT NOT NULL DEFAULT 'dataharvester_v2'

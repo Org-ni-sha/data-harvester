@@ -31,8 +31,12 @@ object PrimaryTick {
      */
     const val COUNTER_DROP_HOLD_MS = 10 * 60_000L
 
-    /** Cumulative mobile counters as read from TrafficStats; -1 = UNSUPPORTED */
-    data class Counters(val rx: Long, val tx: Long) {
+    /**
+     * Cumulative mobile counters as read from TrafficStats; -1 = UNSUPPORTED.
+     * [mobileUp]: a cellular network with internet was up at the reading. TrafficStats only
+     * sums mobile interfaces that are up, so a reading taken while mobile is down is low.
+     */
+    data class Counters(val rx: Long, val tx: Long, val mobileUp: Boolean = true) {
         val supported get() = rx >= 0 && tx >= 0
     }
 
@@ -98,6 +102,12 @@ object PrimaryTick {
             )
         }
 
+        // Baseline read while mobile was down (or before 1.6.8 recorded it), and mobile is up
+        // now: the counters have jumped back to the interfaces' lifetime totals. Some phones
+        // (MIUI) tear mobile data down on Wi-Fi, so this is not usage; a baseline taken on
+        // Wi-Fi, or held past COUNTER_DROP_HOLD_MS, would otherwise count GBs as OK.
+        val mobileReturned = hasBaseline && !rebooted && counters.mobileUp && cp.mobileUpAtReading != 1
+
         val deltaRx = counters.rx - cp.mobileRx
         val deltaTx = counters.tx - cp.mobileTx
         // Unknown span (no counter time): judge it as one ordinary tick, the strict choice
@@ -106,7 +116,7 @@ object PrimaryTick {
 
         val counterStatus = when {
             !hasBaseline -> "BASELINE"
-            rebooted || dropped -> "COUNTER_RESET"
+            rebooted || dropped || mobileReturned -> "COUNTER_RESET"
             implausible -> "COUNTER_JUMP"
             else -> "OK"
         }
@@ -127,7 +137,8 @@ object PrimaryTick {
                 lastTickElapsed = nowElapsed,
                 lastTickWall = nowWall,
                 counterElapsed = nowElapsed,
-                counterWall = nowWall
+                counterWall = nowWall,
+                mobileUpAtReading = if (counters.mobileUp) 1 else 0
             )
         )
     }

@@ -18,6 +18,9 @@
     <!-- Detect current network type (WiFi/LTE/5G) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Keep the CPU awake while a collection tick saves (normal permission, auto-granted) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- Restart collection service after device reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     
@@ -89,6 +92,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Continuous on-device measurement of network data usage for a consented research study" />
         </service>
+
+        <!-- Wake-up alarm of the collection service (see DataCollectionService.heartbeat) -->
+        <receiver
+            android:name=".HeartbeatReceiver"
+            android:exported="false" />
 
         <!-- Boot Receiver — restarts collection after reboot and after an app update -->
         <receiver

@@ -34,6 +34,8 @@ import com.capstone.dataharvester.util.StudyManager
  *         counter_elapsed / counter_wall on collection_checkpoint
  *  - v13: rows already on the phone join the official study (every row collected by
  *         app 1.6.1 or later belongs to it); no schema change
+ *  - v14: mobile_up_at_reading on collection_checkpoint (1.6.8: a baseline read while
+ *         mobile data was down is not compared with a reading taken after it came back)
  */
 @Database(
     entities = [
@@ -59,7 +61,7 @@ abstract class AppDatabase : RoomDatabase() {
          * Schema version. Raising it needs a MIGRATION_<old>_<new> in [ALL_MIGRATIONS]:
          * MigrationCoverageTest (run by publishUpdate) fails otherwise.
          */
-        const val VERSION = 13
+        const val VERSION = 14
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -370,6 +372,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v13 → v14 (app 1.6.8): the checkpoint records whether mobile data was up at its
+         * reading. Existing checkpoints get -1 (unknown), which PrimaryTick treats like
+         * "down": if mobile is up at the first tick after the update, that one interval is
+         * COUNTER_RESET with 0 bytes instead of risking a phantom jump.
+         */
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "collection_checkpoint", "mobile_up_at_reading", "INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
         /** Every migration, oldest first. A new schema version adds its migration here. */
         val ALL_MIGRATIONS: Array<Migration>
             get() = arrayOf(
@@ -384,7 +398,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_9_10,
                 MIGRATION_10_11,
                 MIGRATION_11_12,
-                MIGRATION_12_13
+                MIGRATION_12_13,
+                MIGRATION_13_14
             )
 
         /**
