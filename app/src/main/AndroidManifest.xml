@@ -98,6 +98,11 @@
             android:name=".HeartbeatReceiver"
             android:exported="false" />
 
+        <!-- Puts the collection notification back when it is swiped away -->
+        <receiver
+            android:name=".NotificationDismissedReceiver"
+            android:exported="false" />
+
         <!-- Boot Receiver — restarts collection after reboot and after an app update -->
         <receiver
             android:name=".BootReceiver"

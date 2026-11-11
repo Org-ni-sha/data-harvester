@@ -29,6 +29,7 @@ import com.capstone.dataharvester.data.CollectionCheckpoint
 import com.capstone.dataharvester.data.CollectionLocks
 import com.capstone.dataharvester.data.DatabaseGuard
 import com.capstone.dataharvester.data.UsageRecord
+import com.capstone.dataharvester.util.BackgroundRestrictions
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.DeviceIdManager
 import com.capstone.dataharvester.util.DeviceInfoHelper
@@ -95,6 +96,7 @@ class DataCollectionService : Service() {
         const val CHANNEL_ID = "data_harvester_channel"
         const val NOTIFICATION_ID = 1
         private const val UPDATE_NEEDED_NOTIFICATION_ID = 3
+        private const val PAUSED_BY_PHONE_NOTIFICATION_ID = 4
         const val COLLECTION_INTERVAL_MS = MeasurementRules.COLLECTION_INTERVAL_MS // 30 seconds
         const val APP_COLLECTION_INTERVAL_MS = MeasurementRules.APP_COLLECTION_INTERVAL_MS // 10 minutes
 
@@ -115,6 +117,29 @@ class DataCollectionService : Service() {
         /** Called by [HeartbeatReceiver] when the wake-up alarm fires. */
         fun onHeartbeat() {
             current?.heartbeat()
+        }
+
+        /**
+         * Called by [NotificationDismissedReceiver]: put the notification back at once. When
+         * the service is gone although collection should run, start it again (allowed from
+         * the background because the app is exempt from battery optimization).
+         */
+        fun onNotificationDismissed(context: Context) {
+            val service = current
+            if (service != null) {
+                service.handler.post { service.repostForeground() }
+                return
+            }
+            val shouldCollect = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(PREF_IS_COLLECTING, false)
+            if (!shouldCollect) return
+            try {
+                androidx.core.content.ContextCompat.startForegroundService(
+                    context, Intent(context, DataCollectionService::class.java)
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not restart collection after the notification was dismissed", e)
+            }
         }
 
         // SharedPreferences keys
@@ -152,6 +177,16 @@ class DataCollectionService : Service() {
 
     // Track when service started (for runtime display in notification)
     private var startTimeMs: Long = 0L
+
+    // Text of the collection notification, so a re-post shows the latest stats
+    @Volatile private var notificationText = "Starting data collection..."
+
+    // True once the loops run; a repeated start then only re-posts the notification
+    @Volatile private var loopsStarted = false
+
+    // False until the first tick of this run: its interval spans the time collection was
+    // stopped or the app was updated, which is not a stall
+    @Volatile private var firstTickDone = false
 
     // Set when the service stops without the user asking (foreground-service timeout, or
     // a database that needs a fixed update), so onDestroy keeps PREF_IS_COLLECTING and the
@@ -215,17 +250,7 @@ class DataCollectionService : Service() {
         // Start as a foreground service with a persistent notification.
         // specialUse (Android 14+): continuous measurement has no runtime cap and may be
         // restarted from BOOT_COMPLETED, unlike dataSync (6 h/day cap on Android 15+)
-        val notification = buildNotification("Starting data collection...")
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                0
-            }
-        )
+        repostForeground()
 
         // No collection without consent (e.g. a boot restart after consent was withdrawn).
         // startForeground above must still run first, or Android kills the app.
@@ -234,6 +259,13 @@ class DataCollectionService : Service() {
             prefs.edit().putBoolean(PREF_IS_COLLECTING, false).apply()
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // Already collecting (the dashboard was opened, or the notification came back after
+        // a swipe): the notification is shown again above; keep the loops and the runtime
+        if (isRunning && loopsStarted) {
+            Log.i(TAG, "Already collecting — notification re-posted")
+            return START_STICKY
         }
 
         // Record start time for runtime display
@@ -260,6 +292,7 @@ class DataCollectionService : Service() {
 
     private fun startLoops() {
         if (!isRunning) return // stopped while the database was opening
+        loopsStarted = true
 
         // Start the primary collection loop (TrafficStats, every 30s)
         handler.removeCallbacks(collectionRunnable) // Prevent duplicate callbacks
@@ -310,6 +343,43 @@ class DataCollectionService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * The app was swiped out of Recents. Collection keeps running as a foreground service;
+     * show the notification again (some launchers clear it with the task) and re-arm the
+     * wake-up alarm.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (!isRunning) return
+        Log.i(TAG, "App removed from Recents — collection continues")
+        repostForeground()
+        scheduleHeartbeat()
+    }
+
+    /**
+     * Shows the collection notification as this service's foreground notification. Used at
+     * start, after the notification was swiped away and after the task was removed.
+     */
+    private fun repostForeground() {
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(notificationText),
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                } else {
+                    0
+                }
+            )
+        } catch (e: Exception) {
+            // Only possible on a re-post (the first call runs from onStartCommand): fall back
+            // to an ordinary notify so the participant still sees collection is on
+            Log.w(TAG, "startForeground re-post failed, notifying instead", e)
+            updateNotification(notificationText)
+        }
+    }
 
     // ─── Heartbeat (wake-up alarm) ─────────────────────────────────────────
 
@@ -628,6 +698,21 @@ class DataCollectionService : Service() {
         // The next interval starts on the current network
         cellularSeenThisInterval = isNonWifiData(currentNetworkType)
 
+        // A very long GAP inside a run (not the first tick, so not a stop/start or update,
+        // and GAP, so not a reboot): the phone froze the app. On HiOS ask for "No Restrictions"
+        val wasFirstTick = !firstTickDone
+        firstTickDone = true
+        if (!wasFirstTick && committed.tick.status == "GAP" &&
+            committed.tick.elapsedMs >= BackgroundRestrictions.STALL_MS
+        ) {
+            val restrictions = BackgroundRestrictions(this@DataCollectionService)
+            Log.w(TAG, "Stalled ${committed.tick.elapsedMs / 60_000} min without a reboot " +
+                "(vendor freezer? transsion=${restrictions.isTranssion()})")
+            if (restrictions.isTranssion() && restrictions.recordStall(committed.tick.elapsedMs)) {
+                notifyPausedByPhone(committed.tick.elapsedMs / 60_000)
+            }
+        }
+
         // ── 3. Update notification with current stats ──
         val record = committed.record
         val count = db.usageDao().getCount()
@@ -811,24 +896,69 @@ class DataCollectionService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        // Swiping the notification away (Android 14+ allows it) puts it straight back
+        val deleteIntent = PendingIntent.getBroadcast(
+            this, 1,
+            Intent(this, NotificationDismissedReceiver::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Data Harvester")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_menu_info_details)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("Data Harvester")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_menu_info_details)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .build()
+        }
+        builder
+            .setContentTitle("Data Harvester")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentIntent(pendingIntent)
+            .setDeleteIntent(deleteIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Show at once, not after Android 12's 10-second foreground-service delay
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return builder.build()
+    }
+
+    /**
+     * The phone kept this app from running for a long time although it was not rebooted:
+     * on TECNO / Infinix / itel this is the HiOS freezer. Ask the participant to set
+     * "No Restrictions" (the dashboard shows the steps; this notification opens it).
+     */
+    private fun notifyPausedByPhone(minutes: Long) {
+        val pendingIntent = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        val notification = builder
+            .setContentTitle("Collection was paused by the phone")
+            .setContentText("Paused about $minutes min by battery saving. Tap to allow Data Harvester to run.")
+            .setStyle(
+                Notification.BigTextStyle().bigText(
+                    "Your phone's battery saving paused Data Harvester for about $minutes minutes. " +
+                        "Tap here, then set Data Harvester to \"No Restrictions\" so it keeps " +
+                        "collecting without opening the app."
+                )
+            )
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        try {
+            getSystemService(NotificationManager::class.java).notify(PAUSED_BY_PHONE_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Cannot post notification (POST_NOTIFICATIONS denied)", e)
         }
     }
 
@@ -860,6 +990,7 @@ class DataCollectionService : Service() {
     }
 
     private fun updateNotification(text: String) {
+        notificationText = text
         val notification = buildNotification(text)
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification)

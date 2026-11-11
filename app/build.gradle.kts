@@ -68,8 +68,8 @@ android {
         applicationId = "com.capstone.dataharvester"
         minSdk = 23
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.6.8"
+        versionCode = 15
+        versionName = "1.6.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
