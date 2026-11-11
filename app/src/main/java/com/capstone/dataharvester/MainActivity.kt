@@ -22,6 +22,7 @@ import com.capstone.dataharvester.data.CollectionLocks
 import com.capstone.dataharvester.data.DatabaseGuard
 import com.capstone.dataharvester.ui.Dialogs
 import com.capstone.dataharvester.ui.Dialogs.withDangerButton
+import com.capstone.dataharvester.util.BackgroundRestrictions
 import com.capstone.dataharvester.util.ConsentManager
 import com.capstone.dataharvester.util.CsvExporter
 import com.capstone.dataharvester.util.DeviceIdManager
@@ -177,7 +178,52 @@ class MainActivity : AppCompatActivity() {
             CollectionWatchdogWorker.schedule(this@MainActivity)
 
             showOfficialCollectionNoticeOnce()
+            // Not on top of the official notice: then it follows that notice's buttons
+            if (StudyManager(this@MainActivity).isNoticeSeen()) showBackgroundSetupIfNeeded()
         }
+    }
+
+    private var backgroundDialogShowing = false
+
+    /**
+     * TECNO / Infinix / itel (HiOS): the phone's own battery saving freezes the app as soon
+     * as it leaves the screen, whatever Android's battery setting says, so collection only
+     * ran while the app was open or in Recents. Shown until the participant opens the
+     * setting, and again when the collector later sees the app was paused anyway.
+     */
+    private fun showBackgroundSetupIfNeeded() {
+        val restrictions = BackgroundRestrictions(this)
+        if (!restrictions.isTranssion() || backgroundDialogShowing || isFinishing) return
+        val stallMinutes = restrictions.pendingStallMinutes()
+        if (restrictions.isSetupConfirmed() && stallMinutes == 0L) return
+
+        backgroundDialogShowing = true
+        Dialogs.builder(this)
+            .setTitle("Let Data Harvester run in the background")
+            .setMessage(buildString {
+                if (stallMinutes > 0) {
+                    append("Your phone's battery saving paused collection for about $stallMinutes minutes.\n\n")
+                } else {
+                    append("On this phone, battery saving stops Data Harvester when you leave the app, ")
+                    append("so records are only saved while it is open.\n\n")
+                }
+                append("To keep collecting without opening the app:\n")
+                append("1. Tap OPEN SETTINGS.\n")
+                append("2. Find Data Harvester in the list (use the search box).\n")
+                append("3. Choose \"No Restrictions\".\n\n")
+                append("If a different page opens, look for Battery or App launch and allow ")
+                append("Data Harvester to run in the background.")
+            })
+            .setPositiveButton("OPEN SETTINGS") { _, _ ->
+                restrictions.confirmSetup()
+                if (!restrictions.openSettings()) {
+                    Toast.makeText(this, "Could not open Settings", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("LATER", null)
+            .setOnDismissListener { backgroundDialogShowing = false }
+            .setCancelable(true)
+            .show()
     }
 
     private var databaseReady = false
@@ -234,7 +280,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (databaseReady) updateStats()
+        if (!databaseReady) return
+        updateStats()
+
+        // Collecting: start the service again. A running service only re-posts its
+        // notification, so one swiped away comes back without Stop and Start; a service
+        // the phone killed is restarted from the foreground.
+        val collecting = getSharedPreferences(DataCollectionService.PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(DataCollectionService.PREF_IS_COLLECTING, false)
+        if (collecting) {
+            try {
+                ContextCompat.startForegroundService(this, Intent(this, DataCollectionService::class.java))
+            } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "Could not re-post the collection notification", e)
+            }
+        }
+        if (StudyManager(this).isNoticeSeen()) showBackgroundSetupIfNeeded()
     }
 
     override fun onDestroy() {
@@ -293,9 +354,13 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton(if (collecting) "OK" else "START") { _, _ ->
                     study.markNoticeSeen()
                     if (!collecting) startCollection()
+                    showBackgroundSetupIfNeeded()
                 }
                 .apply {
-                    if (!collecting) setNegativeButton("LATER") { _, _ -> study.markNoticeSeen() }
+                    if (!collecting) setNegativeButton("LATER") { _, _ ->
+                        study.markNoticeSeen()
+                        showBackgroundSetupIfNeeded()
+                    }
                 }
                 .setCancelable(false)
                 .show()
